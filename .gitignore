@@ -1,0 +1,5 @@
+venv/                 # Ignores the entire virtual environment folder
+.env                  # Ignores the .env file in the root directory
+__pycache__/          # Ignores Python's compiled bytecode cache folders
+*.pyc                 # Ignores Python compiled bytecode files
+google-credentials.json # Ignores the raw JSON credentials file (if you downloaded it to the project folder)
