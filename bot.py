@@ -372,8 +372,8 @@ async def setup_bot_application():
     global bot_instance_global # Access the global bot instance
 
     # Load environment variables (from Render's env vars)
-    bot_token = os.getenv("TELEGRAM_TOKEN")
-    spreadsheet_id = os.getenv("SPREADSHEET_ID")
+    bot_token = os.getenv("BOT_TOKEN") # Changed from TELEGRAM_TOKEN
+    spreadsheet_id = os.getenv("GOOGLE_SHEET_ID") # Changed from SPREADSHEET_ID
     google_credentials_json_b64 = os.getenv("GOOGLE_CREDENTIALS_JSON_BASE64")
     render_external_url = os.getenv("RENDER_EXTERNAL_URL")
 
@@ -391,7 +391,7 @@ async def setup_bot_application():
         exit(1)
 
     if not all([bot_token, spreadsheet_id, google_credentials_json_b64]):
-        logger.error("Missing one or more required environment variables (TELEGRAM_TOKEN, SPREADSHEET_ID, GOOGLE_CREDENTIALS_JSON_BASE64).")
+        logger.error("Missing one or more required environment variables (BOT_TOKEN, GOOGLE_SHEET_ID, GOOGLE_CREDENTIALS_JSON_BASE64).")
         exit(1)
 
     # Initialize the bot instance
