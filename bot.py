@@ -429,22 +429,6 @@ async def setup_bot_application():
     logger.info("Telegram Application initialized.")
 
 
-# --- Flask Endpoints ---
-# These routes are for when the bot is deployed on Render using webhooks.
-# Gunicorn will import this module and run the 'app' Flask instance.
-@app.before_first_request
-def before_first_request_hook():
-    """
-    Initializes the Telegram Application on the first request.
-    This ensures the async setup runs within Flask's context.
-    """
-    global telegram_app_instance
-    global bot_instance_global
-    if telegram_app_instance is None:
-        # This block is now simplified as the global initialization handles the main setup.
-        # We just need to ensure telegram_app_instance is available.
-        pass # Remove the problematic asyncio.run call from here.
-
 # Initialize the bot and PTB application globally when the module is loaded
 # This is a common pattern for PTB with Flask/Gunicorn
 async def _global_app_init():
@@ -521,4 +505,3 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     logger.info(f"Starting Flask app locally on port {port} for webhook testing.")
     app.run(host="0.0.0.0", port=port)
-
