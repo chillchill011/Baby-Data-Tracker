@@ -5,9 +5,7 @@ import base64
 from datetime import datetime, timedelta
 import asyncio
 import requests # For the coldstart ping
-from flask import Flask, request # For webhook and coldstart endpoint
-from dotenv import load_dotenv
-load_dotenv()
+from flask import Flask, request # For webhook and coldstart endpoint (only active on Render)
 
 from telegram import Update
 from telegram.ext import (
@@ -29,7 +27,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# --- Flask App for Webhook and Cold Start ---
+# --- Flask App for Webhook and Cold Start (Only active when served by Gunicorn/Werkzeug on Render) ---
+# This 'app' instance is intended for Render's webhook setup.
+# For local polling, it won't be explicitly run.
 app = Flask(__name__)
 
 # Global variable to hold the bot instance
@@ -84,7 +84,16 @@ class BabyTrackerBot:
         """Authenticates with Google Sheets using service account credentials."""
         try:
             # Decode base64 credentials and load as JSON
-            credentials_info = json.loads(base64.b64decode(self.credentials_json_b64).decode('utf-8'))
+            # THIS LINE MUST COME FIRST TO DEFINE decoded_string
+            decoded_string = base64.b64decode(self.credentials_json_b64).decode('utf-8')
+            
+            # Debug prints (now correctly placed after decoded_string is defined)
+            print(f"--- DEBUG: Decoded string length: {len(decoded_string)}")
+            print(f"--- DEBUG: Decoded string (first 200 chars): {decoded_string[:200]}")
+            # print("--- DEBUG: Full Decoded String (for inspection):") # Uncomment if you need to see the whole thing
+            # print(decoded_string) # Uncomment if you need to see the whole thing
+
+            credentials_info = json.loads(decoded_string) # This line uses decoded_string
             
             # Define the scope for Google Sheets API
             scope = ['https://www.googleapis.com/auth/spreadsheets']
@@ -130,11 +139,11 @@ class BabyTrackerBot:
         welcome_message = (
             f"Hi {user.mention_html()}! I'm your Baby Tracker Bot.\n\n"
             "Here's what I can do:\n"
-            "• `/feed <minutes>`: Log a feeding session (e.g., `/feed 15`)\n"
+            "• `/feed &lt;minutes&gt;`: Log a feeding session (e.g., `/feed 15`)\n"
             "• `/poop`: Log a pooping event\n"
             "• `/pee`: Log a peeing event\n"
             "• `/medication [name]`: Log medication (e.g., `/medication Tylenol`)\n"
-            "• `/summary [days]`: Get a summary for the last N days (e.g., `/summary 7`)\n"
+            "• `/summary [today|yesterday|7days|1month]`: Get a summary for specific periods (e.g., `/summary 7days` or just `/summary` for all)\n"
             "• `/coldstart`: Wake up the bot if it's inactive (for Render.com free tier)\n"
             "• `/help`: Show this message again"
         )
@@ -178,69 +187,94 @@ class BabyTrackerBot:
         await self._log_activity(update, "Medication", med_name)
 
     async def summary(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Provides a summary of activities for the last N days."""
+        """Provides a summary of activities for various periods."""
         try:
-            days = int(context.args[0]) if context.args and context.args[0].isdigit() else 7
-            
-            # Fetch all data from the sheet
             all_records = self.worksheet.get_all_records()
-            
-            summary_data = {}
             today = datetime.now().date()
+            yesterday = today - timedelta(days=1)
+            
+            # Initialize summary data structures
+            summary_today = {'pee': 0, 'poop': 0, 'feed_count': 0, 'feed_total_mins': 0, 'medications': 0}
+            summary_yesterday = {'pee': 0, 'poop': 0, 'feed_count': 0, 'feed_total_mins': 0, 'medications': 0}
+            summary_last_7_days = {'pee': 0, 'poop': 0, 'feed_count': 0, 'feed_total_mins': 0, 'medications': 0}
+            summary_last_30_days = {'pee': 0, 'poop': 0, 'feed_count': 0, 'feed_total_mins': 0, 'medications': 0}
 
             for record in all_records:
                 try:
                     record_timestamp_str = record['Timestamp']
-                    # Handle potential missing seconds or different formats
                     try:
                         record_dt = datetime.strptime(record_timestamp_str, '%Y-%m-%d %H:%M:%S')
                     except ValueError:
                         record_dt = datetime.strptime(record_timestamp_str, '%Y-%m-%d %H:%M')
-
                     record_date = record_dt.date()
 
-                    if today - record_date < timedelta(days=days):
-                        date_key = record_date.strftime('%Y-%m-%d')
-                        if date_key not in summary_data:
-                            summary_data[date_key] = {'pee': 0, 'poop': 0, 'feed_count': 0, 'feed_total_mins': 0, 'medications': 0}
-
-                        activity_type = record['Activity Type']
-                        value_details = record['Value/Details']
-
-                        if activity_type == 'Pee':
-                            summary_data[date_key]['pee'] += 1
-                        elif activity_type == 'Poop':
-                            summary_data[date_key]['poop'] += 1
-                        elif activity_type == 'Feed':
-                            summary_data[date_key]['feed_count'] += 1
-                            if 'mins' in value_details:
+                    activity_type = record['Activity Type']
+                    value_details = record['Value/Details']
+                    
+                    # Helper to update a summary dictionary
+                    def update_summary_dict(summary_dict, activity, value):
+                        if activity == 'Pee':
+                            summary_dict['pee'] += 1
+                        elif activity == 'Poop':
+                            summary_dict['poop'] += 1
+                        elif activity == 'Feed':
+                            summary_dict['feed_count'] += 1
+                            if 'mins' in value:
                                 try:
-                                    duration = int(value_details.split(' ')[0])
-                                    summary_data[date_key]['feed_total_mins'] += duration
+                                    duration = int(value.split(' ')[0])
+                                    summary_dict['feed_total_mins'] += duration
                                 except ValueError:
-                                    pass # Ignore if duration is not a valid number
-                        elif activity_type == 'Medication':
-                            summary_data[date_key]['medications'] += 1
+                                    pass
+                        elif activity == 'Medication':
+                            summary_dict['medications'] += 1
+
+                    # Categorize records into respective summaries
+                    if record_date == today:
+                        update_summary_dict(summary_today, activity_type, value_details)
+                    
+                    if record_date == yesterday:
+                        update_summary_dict(summary_yesterday, activity_type, value_details)
+
+                    if today - record_date < timedelta(days=7): # Last 7 days including today
+                        update_summary_dict(summary_last_7_days, activity_type, value_details)
+
+                    if today - record_date < timedelta(days=30): # Last 30 days including today
+                        update_summary_dict(summary_last_30_days, activity_type, value_details)
+
                 except Exception as e:
                     logger.warning(f"Skipping malformed record: {record} - Error: {e}")
-                    continue # Skip to the next record if parsing fails
+                    continue
 
-            response_message = f"--- Last {days} Days Summary ---\n\n"
-            # Sort by date, newest first
-            sorted_dates = sorted(summary_data.keys(), reverse=True)
-
-            if not sorted_dates:
-                response_message += "No activities found for the selected period."
-            else:
-                for date_key in sorted_dates:
-                    data = summary_data[date_key]
-                    response_message += (
-                        f"Day ({date_key}): {data['pee']} pee, {data['poop']} poop, "
-                        f"{data['feed_count']} feeds (Total {data['feed_total_mins']} mins), "
-                        f"{data['medications']} medications\n"
-                    )
+            response_message = "--- Baby Activity Summary ---\n\n"
             
-            await update.message.reply_text(response_message)
+            # Helper to format summary output
+            def format_summary(title, data, date_info=""):
+                return (
+                    f"**{title}** {date_info}:\n"
+                    f"  Pee: {data['pee']}\n"
+                    f"  Poop: {data['poop']}\n"
+                    f"  Feeds: {data['feed_count']} (Total {data['feed_total_mins']} mins)\n"
+                    f"  Medications: {data['medications']}\n\n"
+                )
+
+            # Determine which summaries to show
+            arg = context.args[0].lower() if context.args else None
+
+            if arg == 'today':
+                response_message += format_summary("Current Day", summary_today, f"({today.strftime('%Y-%m-%d')})")
+            elif arg == 'yesterday':
+                response_message += format_summary("Previous Day", summary_yesterday, f"({yesterday.strftime('%Y-%m-%d')})")
+            elif arg == '7days':
+                response_message += format_summary("Last 7 Days", summary_last_7_days)
+            elif arg == '1month':
+                response_message += format_summary("Last 1 Month", summary_last_30_days)
+            else: # Default to all summaries if no specific argument or invalid argument
+                response_message += format_summary("Current Day", summary_today, f"({today.strftime('%Y-%m-%d')})")
+                response_message += format_summary("Previous Day", summary_yesterday, f"({yesterday.strftime('%Y-%m-%d')})")
+                response_message += format_summary("Last 7 Days", summary_last_7_days)
+                response_message += format_summary("Last 1 Month", summary_last_30_days)
+
+            await update.message.reply_html(response_message)
 
         except Exception as e:
             logger.error(f"Error generating summary: {e}")
@@ -271,56 +305,10 @@ class BabyTrackerBot:
                 "You can start logging activities."
             )
 
-# --- Main function to set up and run the bot ---
-async def run_bot():
-    """Sets up the Telegram bot and Flask app for webhooks."""
-    global telegram_app_instance # Use the global instance
-
-    bot_token = os.getenv("BOT_TOKEN")
-    spreadsheet_id = os.getenv("GOOGLE_SHEET_ID")
-    google_credentials_json_b64 = os.getenv("GOOGLE_CREDENTIALS_JSON_BASE64")
-    render_external_url = os.getenv("RENDER_EXTERNAL_URL") # Provided by Render
-
-    if not all([bot_token, spreadsheet_id, google_credentials_json_b64, render_external_url]):
-        logger.error("Missing one or more required environment variables. Please check BOT_TOKEN, GOOGLE_SHEET_ID, GOOGLE_CREDENTIALS_JSON_BASE64, and RENDER_EXTERNAL_URL.")
-        exit(1)
-
-    # Initialize the bot
-    bot_instance = BabyTrackerBot(bot_token, spreadsheet_id, google_credentials_json_b64)
-    
-    # Set the PingService URL
-    coldstart_url = f"{render_external_url}/coldstart"
-    bot_instance.ping_service.url = coldstart_url
-    logger.info(f"PingService URL set to: {coldstart_url}")
-
-    # Create the Application and pass your bot's token.
-    telegram_app_instance = Application.builder().token(bot_token).build()
-
-    # Register command handlers
-    telegram_app_instance.add_handler(CommandHandler("start", bot_instance.start))
-    telegram_app_instance.add_handler(CommandHandler("feed", bot_instance.feed))
-    telegram_app_instance.add_handler(CommandHandler("poop", bot_instance.poop))
-    telegram_app_instance.add_handler(CommandHandler("pee", bot_instance.pee))
-    telegram_app_instance.add_handler(CommandHandler("medication", bot_instance.medication))
-    telegram_app_instance.add_handler(CommandHandler("summary", bot_instance.summary))
-    telegram_app_instance.add_handler(CommandHandler("help", bot_instance.help_command))
-    telegram_app_instance.add_handler(CommandHandler("coldstart", bot_instance.coldstart))
-
-    # Set up webhook
-    webhook_path = "/webhook"
-    listen_address = "0.0.0.0"
-    port = int(os.environ.get("PORT", 8000)) # Render provides the PORT env var
-
-    logger.info(f"Setting webhook to {render_external_url}{webhook_path}")
-    await telegram_app_instance.bot.set_webhook(url=f"{render_external_url}{webhook_path}")
-
-    # Start the PTB application in webhook mode
-    # This will be handled by the Flask app's /webhook endpoint
-    # We don't call run_webhook directly here, as Flask will handle the HTTP server.
-    logger.info("Telegram bot application prepared for webhook.")
-
-
-# --- Flask Endpoints ---
+# --- Flask Endpoints (Only active when served by Gunicorn/Werkzeug on Render) ---
+# These routes are for when the bot is deployed on Render using webhooks.
+# They are part of the 'app' Flask instance, which is not directly run
+# when the bot is in local polling mode.
 @app.route("/webhook", methods=["POST"])
 async def webhook_handler():
     """Handle incoming Telegram updates."""
@@ -339,19 +327,54 @@ async def webhook_handler():
 def coldstart_endpoint():
     """Simple endpoint to keep Render service awake."""
     logger.info("Coldstart endpoint hit.")
+    # This endpoint doesn't need to interact with the bot_instance's ping_service
+    # directly for its primary purpose (keeping Render awake).
+    # The bot's /coldstart command handles the internal status.
     return "Bot is awake!", 200
 
-# --- Entry point for Render ---
+# --- Entry point for Local Polling ---
 if __name__ == "__main__":
-    # Run the bot setup asynchronously
-    asyncio.run(run_bot())
+    # For local testing, we run in polling mode.
+    # For Render deployment, the 'startCommand' in render.yaml will run 'gunicorn bot:app'
+    # which will activate the Flask 'app' and its webhook/coldstart endpoints.
     
-    # Run the Flask app
-    port = int(os.environ.get("PORT", 8000))
-    # Use app.run() for local development. For Render, Gunicorn/Werkzeug will serve.
-    # For Render, the 'startCommand' in render.yaml will typically be `gunicorn bot:app`
-    # where 'bot' is the module name and 'app' is the Flask instance.
-    # For simplicity here, we'll just run Flask directly, but be aware of production setups.
-    logger.info(f"Starting Flask app on port {port}")
-    app.run(host="0.0.0.0", port=port)
+    # Ensure environment variables are loaded if using .env file
+    from dotenv import load_dotenv
+    load_dotenv()
+
+    bot_token = os.getenv("BOT_TOKEN")
+    spreadsheet_id = os.getenv("GOOGLE_SHEET_ID")
+    google_credentials_json_b64 = os.getenv("GOOGLE_CREDENTIALS_JSON_BASE64")
+    render_external_url = os.getenv("RENDER_EXTERNAL_URL") # Still needed for PingService URL
+
+    if not all([bot_token, spreadsheet_id, google_credentials_json_b64]):
+        logger.error("Missing one or more required environment variables for local polling. Please check BOT_TOKEN, GOOGLE_SHEET_ID, GOOGLE_CREDENTIALS_JSON_BASE64.")
+        exit(1)
+
+    # Initialize the bot instance
+    bot_instance = BabyTrackerBot(bot_token, spreadsheet_id, google_credentials_json_b64)
+    
+    # Set the PingService URL (even if dummy for local)
+    coldstart_url = f"{render_external_url}/coldstart" # Will be http://localhost:8000/coldstart
+    bot_instance.ping_service.url = coldstart_url
+    logger.info(f"PingService URL set to: {coldstart_url}")
+
+    # Create the Application and pass your bot's token.
+    # This is the PTB application instance
+    telegram_app_instance = Application.builder().token(bot_token).build()
+
+    # Register command handlers
+    telegram_app_instance.add_handler(CommandHandler("start", bot_instance.start))
+    telegram_app_instance.add_handler(CommandHandler("feed", bot_instance.feed))
+    telegram_app_instance.add_handler(CommandHandler("poop", bot_instance.poop))
+    telegram_app_instance.add_handler(CommandHandler("pee", bot_instance.pee))
+    telegram_app_instance.add_handler(CommandHandler("medication", bot_instance.medication))
+    telegram_app_instance.add_handler(CommandHandler("summary", bot_instance.summary))
+    telegram_app_instance.add_handler(CommandHandler("help", bot_instance.help_command))
+    telegram_app_instance.add_handler(CommandHandler("coldstart", bot_instance.coldstart))
+
+    logger.info("Starting bot in polling mode...")
+    # Run the bot in polling mode. This is a blocking call.
+    telegram_app_instance.run_polling(allowed_updates=Update.ALL_TYPES)
+    logger.info("Bot has stopped.")
 
