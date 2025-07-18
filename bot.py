@@ -28,12 +28,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # --- Flask App for Webhook and Cold Start ---
-# This 'app' instance will be run by Gunicorn on Render.
 app = Flask(__name__)
 
 # Global variable to hold the bot instance
-# This is a common pattern when integrating PTB with Flask
 telegram_app_instance = None
+bot_instance_global = None # Also make bot_instance global for access in setup
 
 # --- Ping Service for Cold Start ---
 class PingService:
@@ -76,8 +75,7 @@ class BabyTrackerBot:
         self.worksheet = self._get_or_create_worksheet("BabyLog") # Default sheet for logging
 
         # Initialize ping service for cold start
-        # The URL will be set dynamically via RENDER_EXTERNAL_URL env var
-        self.ping_service = PingService("") # Placeholder, will be updated in run_bot_for_render
+        self.ping_service = PingService("") # Placeholder, will be updated in setup_bot_application
 
     def _authenticate_google_sheets(self):
         """Authenticates with Google Sheets using service account credentials."""
@@ -378,15 +376,117 @@ class BabyTrackerBot:
             await update.message.reply_text("I'm not sure what that means. Please use the menu or type a command.", reply_markup=self._get_main_keyboard())
 
 
-# --- Flask Endpoints (Only active when served by Gunicorn/Werkzeug on Render) ---
+# --- Main function to set up and run the bot (for Render deployment) ---
+async def setup_bot_application():
+    """Initializes and sets up the PTB Application for webhooks."""
+    global telegram_app_instance
+    global bot_instance_global # Access the global bot instance
+
+    # Load environment variables (from Render's env vars)
+    bot_token = os.getenv("TELEGRAM_TOKEN") # Use TELEGRAM_TOKEN for Render
+    spreadsheet_id = os.getenv("SPREADSHEET_ID")
+    google_credentials_json_b64 = os.getenv("GOOGLE_CREDENTIALS_JSON_BASE64")
+    render_external_url = os.getenv("RENDER_EXTERNAL_URL") # Provided by Render
+
+    if not all([bot_token, spreadsheet_id, google_credentials_json_b64, render_external_url]):
+        logger.error("Missing one or more required environment variables for Render deployment. Please check TELEGRAM_TOKEN, SPREADSHEET_ID, GOOGLE_CREDENTIALS_JSON_BASE64, and RENDER_EXTERNAL_URL.")
+        exit(1) # Critical for deployment, exit if missing
+
+    # Initialize the bot instance
+    bot_instance_global = BabyTrackerBot(bot_token, spreadsheet_id, google_credentials_json_b64)
+    
+    # Set the PingService URL
+    coldstart_url = f"{render_external_url}/coldstart"
+    bot_instance_global.ping_service.url = coldstart_url
+    logger.info(f"PingService URL set to: {coldstart_url}")
+
+    # Create the Application and pass your bot's token.
+    telegram_app_instance = Application.builder().token(bot_token).build()
+
+    # Register command handlers
+    telegram_app_instance.add_handler(CommandHandler("start", bot_instance_global.start))
+    telegram_app_instance.add_handler(CommandHandler("feed", bot_instance_global.feed))
+    telegram_app_instance.add_handler(CommandHandler("poop", bot_instance_global.poop))
+    telegram_app_instance.add_handler(CommandHandler("pee", bot_instance_global.pee))
+    telegram_app_instance.add_handler(CommandHandler("medication", bot_instance_global.medication))
+    telegram_app_instance.add_handler(CommandHandler("summary", bot_instance_global.summary))
+    telegram_app_instance.add_handler(CommandHandler("help", bot_instance_global.help_command))
+    telegram_app_instance.add_handler(CommandHandler("menu", bot_instance_global.menu_command))
+    telegram_app_instance.add_handler(CommandHandler("coldstart", bot_instance_global.coldstart))
+
+    # IMPORTANT: Order of MessageHandlers matters!
+    telegram_app_instance.add_handler(MessageHandler(filters.TEXT & filters.Regex("^(Poop|Pee|Feed|Medication|Summary|Cold Start|Help)$"), bot_instance_global.handle_keyboard_input))
+    telegram_app_instance.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot_instance_global.handle_free_text_input))
+
+    # Set up webhook
+    webhook_path = "/webhook"
+    logger.info(f"Setting webhook to {render_external_url}{webhook_path}")
+    await telegram_app_instance.bot.set_webhook(url=f"{render_external_url}{webhook_path}")
+
+    logger.info("Telegram bot application prepared for webhook.")
+    # Initialize the Application
+    await telegram_app_instance.initialize()
+    logger.info("Telegram Application initialized.")
+
+
+# --- Flask Endpoints ---
 # These routes are for when the bot is deployed on Render using webhooks.
-# They are part of the 'app' Flask instance, which is not directly run
-# when the bot is in local polling mode.
+# Gunicorn will import this module and run the 'app' Flask instance.
+@app.before_first_request
+def before_first_request_hook():
+    """
+    Initializes the Telegram Application on the first request.
+    This ensures the async setup runs within Flask's context.
+    """
+    global telegram_app_instance
+    global bot_instance_global
+    if telegram_app_instance is None:
+        # This block is now simplified as the global initialization handles the main setup.
+        # We just need to ensure telegram_app_instance is available.
+        pass # Remove the problematic asyncio.run call from here.
+
+# Initialize the bot and PTB application globally when the module is loaded
+# This is a common pattern for PTB with Flask/Gunicorn
+async def _global_app_init():
+    global telegram_app_instance
+    global bot_instance_global
+    if telegram_app_instance is None: # Only initialize once
+        await setup_bot_application()
+
+# Run the global initialization when the module is imported
+# This will happen when Gunicorn loads bot.py
+# We need to ensure this async function is run.
+# For Gunicorn, it's common to have a synchronous entry point.
+# Let's use a simple synchronous wrapper for the async setup.
+def sync_app_init():
+    try:
+        # Check if an event loop is already running (e.g., in some test environments or if Gunicorn does something special)
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            logger.warning("Event loop already running, scheduling PTB setup as a task.")
+            loop.create_task(_global_app_init())
+        else:
+            asyncio.run(_global_app_init())
+    except RuntimeError as e:
+        if "cannot run an event loop while another loop is running" in str(e):
+            logger.warning("Event loop already running, skipping asyncio.run for setup.")
+        else:
+            logger.error(f"Failed to run global app init: {e}")
+            raise
+    except Exception as e:
+        logger.error(f"Error during global app init: {e}")
+        raise
+
+# Call the synchronous wrapper to initialize the app when the module is loaded
+sync_app_init()
+
+
 @app.route("/webhook", methods=["POST"])
 async def webhook_handler():
     """Handle incoming Telegram updates."""
+    global telegram_app_instance # Ensure we use the globally initialized instance
     if telegram_app_instance is None:
-        logger.error("Telegram application instance not initialized.")
+        logger.error("Telegram application instance not initialized in webhook handler.")
         return "Bot not ready", 500
 
     update_json = request.get_json(force=True)
@@ -400,88 +500,22 @@ async def webhook_handler():
 def coldstart_endpoint():
     """Simple endpoint to keep Render service awake."""
     logger.info("Coldstart endpoint hit.")
-    # This endpoint doesn't need to interact with the bot_instance's ping_service
+    # This endpoint doesn't need to interact with the bot_instance_global's ping_service
     # directly for its primary purpose (keeping Render awake).
     # The bot's /coldstart command handles the internal status.
     return "Bot is awake!", 200
 
-# --- Main function to set up and run the bot (for Render deployment) ---
-async def run_bot_for_render():
-    """Sets up the Telegram bot and Flask app for webhooks."""
-    global telegram_app_instance # Use the global instance
-
-    # Load environment variables (from Render's env vars, not .env file)
-    bot_token = os.getenv("BOT_TOKEN")
-    spreadsheet_id = os.getenv("GOOGLE_SHEET_ID")
-    google_credentials_json_b64 = os.getenv("GOOGLE_CREDENTIALS_JSON_BASE64")
-    render_external_url = os.getenv("RENDER_EXTERNAL_URL") # Provided by Render
-
-    if not all([bot_token, spreadsheet_id, google_credentials_json_b64, render_external_url]):
-        logger.error("Missing one or more required environment variables for Render deployment. Please check BOT_TOKEN, GOOGLE_SHEET_ID, GOOGLE_CREDENTIALS_JSON_BASE64, and RENDER_EXTERNAL_URL.")
-        # For deployment, it's critical to exit if env vars are missing
-        exit(1)
-
-    # Initialize the bot
-    bot_instance = BabyTrackerBot(bot_token, spreadsheet_id, google_credentials_json_b64)
-    
-    # Set the PingService URL
-    coldstart_url = f"{render_external_url}/coldstart"
-    bot_instance.ping_service.url = coldstart_url
-    logger.info(f"PingService URL set to: {coldstart_url}")
-
-    # Create the Application and pass your bot's token.
-    telegram_app_instance = Application.builder().token(bot_token).build()
-
-    # Register command handlers
-    telegram_app_instance.add_handler(CommandHandler("start", bot_instance.start))
-    telegram_app_instance.add_handler(CommandHandler("feed", bot_instance.feed))
-    telegram_app_instance.add_handler(CommandHandler("poop", bot_instance.poop))
-    telegram_app_instance.add_handler(CommandHandler("pee", bot_instance.pee))
-    telegram_app_instance.add_handler(CommandHandler("medication", bot_instance.medication))
-    telegram_app_instance.add_handler(CommandHandler("summary", bot_instance.summary))
-    telegram_app_instance.add_handler(CommandHandler("help", bot_instance.help_command))
-    telegram_app_instance.add_handler(CommandHandler("menu", bot_instance.menu_command))
-    telegram_app_instance.add_handler(CommandHandler("coldstart", bot_instance.coldstart))
-
-    # IMPORTANT: Order of MessageHandlers matters!
-    telegram_app_instance.add_handler(MessageHandler(filters.TEXT & filters.Regex("^(Poop|Pee|Feed|Medication|Summary|Cold Start|Help)$"), bot_instance.handle_keyboard_input))
-    telegram_app_instance.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot_instance.handle_free_text_input))
-
-    # Set up webhook
-    webhook_path = "/webhook"
-    logger.info(f"Setting webhook to {render_external_url}{webhook_path}")
-    await telegram_app_instance.bot.set_webhook(url=f"{render_external_url}{webhook_path}")
-
-    logger.info("Telegram bot application prepared for webhook.")
-
-# This is the entry point for Gunicorn (web: gunicorn bot:app)
-# We need to ensure the PTB application is initialized when the Flask app starts.
-# A common way is to run an async setup function on Flask startup.
-@app.before_request
-def before_request_hook():
-    global telegram_app_instance
-    if telegram_app_instance is None:
-        # This will run the async setup only once when the first request comes in.
-        try:
-            asyncio.run(run_bot_for_render())
-        except RuntimeError as e:
-            if "cannot run an event loop while another loop is running" in str(e):
-                logger.warning("Event loop already running, skipping asyncio.run for setup.")
-            else:
-                raise
-
 # This __main__ block is only for direct execution (e.g., local testing of this deploy file)
 # It will NOT be executed by Gunicorn on Render.
 if __name__ == "__main__":
-    # This block is for local testing of the webhook setup, if desired.
+    # This block is for local testing of the webhook setup.
     # It will start the Flask server directly.
-    # For actual Render deployment, Gunicorn will handle this.
     
     from dotenv import load_dotenv
     load_dotenv() # Load .env for local testing of this deploy file
 
-    # Run the bot setup asynchronously
-    asyncio.run(run_bot_for_render())
+    # Run the bot setup asynchronously for local testing
+    asyncio.run(setup_bot_application())
     
     # Run the Flask app
     port = int(os.environ.get("PORT", 8000))
