@@ -377,6 +377,13 @@ async def setup_bot_application():
     google_credentials_json_b64 = os.getenv("GOOGLE_CREDENTIALS_JSON_BASE64")
     render_external_url = os.getenv("RENDER_EXTERNAL_URL")
 
+    # --- DEBUGGING ENVIRONMENT VARIABLES ---
+    logger.info(f"DEBUG ENV: TELEGRAM_TOKEN length: {len(bot_token) if bot_token else 'None'}")
+    logger.info(f"DEBUG ENV: SPREADSHEET_ID: {spreadsheet_id}")
+    logger.info(f"DEBUG ENV: GOOGLE_CREDENTIALS_JSON_BASE64 length: {len(google_credentials_json_b64) if google_credentials_json_b64 else 'None'}")
+    logger.info(f"DEBUG ENV: RENDER_EXTERNAL_URL: {render_external_url}")
+    # --- END DEBUGGING ---
+
     # Explicitly check if RENDER_EXTERNAL_URL is None or empty string
     if not render_external_url:
         logger.error("RENDER_EXTERNAL_URL environment variable is missing or empty. Please set it in Render's dashboard.")
@@ -495,4 +502,3 @@ except RuntimeError as e:
 except Exception as e:
     logger.error(f"Error during global app init: {e}")
     raise
-
