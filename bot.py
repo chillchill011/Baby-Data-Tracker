@@ -46,10 +46,11 @@ class PingService:
         self.is_active = False
         self.last_ping = None
 
-    def activate(self):
+    async def activate(self): # Made activate async
         """Activate the service with a single ping."""
         try:
-            response = requests.get(self.url)
+            # Use asyncio.to_thread to run the synchronous requests.get in a separate thread
+            response = await asyncio.to_thread(requests.get, self.url)
             self.last_ping = datetime.now()
             self.is_active = True
             logger.info(f"Ping successful: {response.status_code}")
@@ -290,9 +291,11 @@ class BabyTrackerBot:
 
     async def coldstart(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle the /coldstart command to activate the bot."""
-        # The PingService URL needs to be set up in the main function with the actual Render URL
+        logger.info("coldstart command received.") # New log
         if not self.ping_service.is_active:
-            if self.ping_service.activate():
+            logger.info("Ping service is not active, attempting to activate.") # New log
+            if await self.ping_service.activate(): # Added await here
+                logger.info("Ping service activated successfully, sending success message.") # New log
                 await update.message.reply_text(
                     "🟢 Bot Successfully Activated!\n\n"
                     "I'm awake and ready to help you track baby activities.\n\n"
@@ -302,8 +305,10 @@ class BabyTrackerBot:
                     "• View all commands with /start"
                 )
             else:
+                logger.error("Ping service activation failed, sending error message.") # New log
                 await update.message.reply_text("❌ Failed to activate bot. Please try again.")
         else:
+            logger.info("Ping service is already active, sending info message.") # New log
             await update.message.reply_text(
                 "ℹ️ I'm already active and ready!\n\n"
                 "You can start logging activities."
@@ -313,6 +318,7 @@ class BabyTrackerBot:
         """Handles text messages that correspond to keyboard buttons."""
         text = update.message.text
         user_id = update.effective_user.id
+        logger.info(f"Handling keyboard input: {text} from user {user_id}") # New log
 
         if text == "Poop":
             await self.poop(update, context)
@@ -339,10 +345,12 @@ class BabyTrackerBot:
         """Handles free text input, especially after a button press for Feed/Medication."""
         text = update.message.text
         user_id = update.effective_user.id
+        logger.info(f"Handling free text input: {text} from user {user_id}") # New log
         
         # Check if the user is awaiting specific input
         if user_id in context.user_data and 'awaiting_input_for' in context.user_data[user_id]:
             awaiting_for = context.user_data[user_id]['awaiting_input_for']
+            logger.info(f"User {user_id} is awaiting input for: {awaiting_for}") # New log
 
             if awaiting_for == 'feed':
                 if text.isdigit():
