@@ -32,8 +32,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # --- Flask App for Webhook and Cold Start ---
-# Initialize the Flask app FIRST
-app = Flask(__name__)
+# Initialize the Flask app FIRST with a distinct name
+flask_app = Flask(__name__)
 
 # Global variable to hold the bot instance
 telegram_app_instance = None
@@ -439,34 +439,45 @@ async def setup_bot_application():
 # --- Flask Endpoints ---
 # These routes are for when the bot is deployed on Render using webhooks.
 # Uvicorn will import this module and run the 'app' Flask instance.
-@app.route("/webhook", methods=["POST"])
+@flask_app.route("/webhook", methods=["POST"]) # Use flask_app.route
 async def webhook_handler():
     """Handle incoming Telegram updates."""
-    global telegram_app_instance # Ensure we use the globally initialized instance
-    if telegram_app_instance is None:
-        logger.error("Telegram application instance not initialized in webhook handler.")
-        return "Bot not ready", 500
+    logger.info("Webhook handler received a request.") # New log
+    try:
+        # Read the raw request body
+        request_body = await request.get_data() # Use get_data() for raw body in Flask
+        update_json_str = request_body.decode('utf-8')
+        
+        logger.info(f"Received raw update body: {update_json_str}") # New log
 
-    update_json = request.get_json(force=True)
-    update = Update.de_json(update_json, telegram_app_instance.bot)
-    
-    # Process the update asynchronously
-    await telegram_app_instance.process_update(update)
-    return "ok"
+        update_json = json.loads(update_json_str)
+        logger.info(f"Parsed update JSON: {update_json}") # New log
 
-@app.route("/coldstart", methods=["GET"])
+        global telegram_app_instance
+        if telegram_app_instance is None:
+            logger.error("Telegram application instance not initialized in webhook handler.")
+            return "Bot not ready", 500
+
+        update = Update.de_json(update_json, telegram_app_instance.bot)
+        logger.info(f"Processing update: {update}") # New log
+        
+        await telegram_app_instance.process_update(update)
+        logger.info("Update processed successfully.") # New log
+        return "ok"
+    except Exception as e:
+        logger.error(f"Error in webhook_handler: {e}", exc_info=True)
+        return "Error", 500
+
+@flask_app.route("/coldstart", methods=["GET"]) # Use flask_app.route
 def coldstart_endpoint():
     """Simple endpoint to keep Render service awake."""
     logger.info("Coldstart endpoint hit.")
-    # This endpoint doesn't need to interact with the bot_instance_global's ping_service
-    # directly for its primary purpose (keeping Render awake).
-    # The bot's /coldstart command handles the internal status.
     return "Bot is awake!", 200
 
 # This __main__ block is only for direct execution (e.g., local testing of this deploy file)
 # It will NOT be executed by Uvicorn on Render.
 if __name__ == "__main__":
-    # Run the bot setup asynchronously for local testing
+    # Run the bot setup asynchronously
     asyncio.run(setup_bot_application())
     
     # Run the Flask app
@@ -476,7 +487,7 @@ if __name__ == "__main__":
     # where 'bot' is the module name and 'app' is the Flask instance.
     # For simplicity here, we'll just run Flask directly, but be aware of production setups.
     logger.info(f"Starting Flask app locally on port {port} for webhook testing.")
-    app.run(host="0.0.0.0", port=port)
+    flask_app.run(host="0.0.0.0", port=port) # Run flask_app here
 
 # Global initialization for Uvicorn
 # Uvicorn directly imports the 'app' object.
@@ -508,4 +519,4 @@ except Exception as e:
 
 # Wrap the Flask app with WsgiToAsgi for Uvicorn compatibility AFTER routes are defined
 # This makes the WSGI Flask app behave like an ASGI app for Uvicorn
-app = WsgiToAsgi(app)
+app = WsgiToAsgi(flask_app) # Wrap flask_app and assign to 'app'
