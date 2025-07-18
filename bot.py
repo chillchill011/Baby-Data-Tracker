@@ -445,7 +445,7 @@ async def webhook_handler():
     logger.info("Webhook handler received a request.") # New log
     try:
         # Read the raw request body
-        request_body = await request.get_data() # Use get_data() for raw body in Flask
+        request_body = request.get_data() # REMOVED await here
         update_json_str = request_body.decode('utf-8')
         
         logger.info(f"Received raw update body: {update_json_str}") # New log
