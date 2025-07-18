@@ -475,8 +475,6 @@ if __name__ == "__main__":
 
 # Gunicorn startup hook
 # This function will be called by Gunicorn when it starts a worker.
-# We will configure Gunicorn to call this using the --worker-class and --preload flags.
-# This ensures the PTB Application is initialized once per worker process.
 def on_starting(server, worker):
     """
     Gunicorn hook: Called just before the master process is ready to fork workers.
@@ -488,8 +486,19 @@ def on_starting(server, worker):
         # Create a new event loop for this worker, as Gunicorn workers might not inherit one.
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
+        
+        # Run the async setup function
         loop.run_until_complete(setup_bot_application())
-        loop.close() # Close the loop after setup is complete
+        
+        # The loop should ideally not be closed immediately if it's meant to serve async tasks
+        # throughout the worker's lifecycle. However, for a simple setup like this,
+        # where the main async tasks are setting up the webhook and initializing the app,
+        # closing it might be acceptable if no other long-running async tasks are expected
+        # within the on_starting hook.
+        # For robustness, we might not close it here, but let the worker manage it.
+        # Let's remove loop.close() for now to avoid potential issues.
+        # loop.close() # Removed this line
+
     except RuntimeError as e:
         logger.error(f"Error during Gunicorn on_starting hook: {e}")
         if "cannot run an event loop while another loop is running" not in str(e):
@@ -498,3 +507,4 @@ def on_starting(server, worker):
         logger.error(f"Unexpected error in Gunicorn on_starting hook: {e}")
         raise
     logger.info("Telegram Application setup complete in Gunicorn worker.")
+
