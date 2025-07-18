@@ -1,1 +1,1 @@
-web: gunicorn bot:app
+web: gunicorn bot:app --worker-class gevent --preload --log-level info --timeout 120 --env GUNICORN_CMD_ARGS="--log-level info --timeout 120" --access-logfile - --error-logfile - --bind 0.0.0.0:$PORT --on-starting 'bot.on_starting'

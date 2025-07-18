@@ -429,42 +429,9 @@ async def setup_bot_application():
     logger.info("Telegram Application initialized.")
 
 
-# Initialize the bot and PTB application globally when the module is loaded
-# This is a common pattern for PTB with Flask/Gunicorn
-async def _global_app_init():
-    global telegram_app_instance
-    global bot_instance_global
-    if telegram_app_instance is None: # Only initialize once
-        await setup_bot_application()
-
-# Run the global initialization when the module is imported
-# This will happen when Gunicorn loads bot.py
-# We need to ensure this async function is run.
-# For Gunicorn, it's common to have a synchronous entry point.
-# Let's use a simple synchronous wrapper for the async setup.
-def sync_app_init():
-    try:
-        # Check if an event loop is already running (e.g., in some test environments or if Gunicorn does something special)
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            logger.warning("Event loop already running, scheduling PTB setup as a task.")
-            loop.create_task(_global_app_init())
-        else:
-            asyncio.run(_global_app_init())
-    except RuntimeError as e:
-        if "cannot run an event loop while another loop is running" in str(e):
-            logger.warning("Event loop already running, skipping asyncio.run for setup.")
-        else:
-            logger.error(f"Failed to run global app init: {e}")
-            raise
-    except Exception as e:
-        logger.error(f"Error during global app init: {e}")
-        raise
-
-# Call the synchronous wrapper to initialize the app when the module is loaded
-sync_app_init()
-
-
+# --- Flask Endpoints ---
+# These routes are for when the bot is deployed on Render using webhooks.
+# Gunicorn will import this module and run the 'app' Flask instance.
 @app.route("/webhook", methods=["POST"])
 async def webhook_handler():
     """Handle incoming Telegram updates."""
@@ -505,3 +472,29 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     logger.info(f"Starting Flask app locally on port {port} for webhook testing.")
     app.run(host="0.0.0.0", port=port)
+
+# Gunicorn startup hook
+# This function will be called by Gunicorn when it starts a worker.
+# We will configure Gunicorn to call this using the --worker-class and --preload flags.
+# This ensures the PTB Application is initialized once per worker process.
+def on_starting(server, worker):
+    """
+    Gunicorn hook: Called just before the master process is ready to fork workers.
+    This is where we can perform global setup that needs to happen once per worker.
+    """
+    logger.info("Gunicorn worker starting. Initializing Telegram Application...")
+    # Run the async setup function in a new event loop for this worker process
+    try:
+        # Create a new event loop for this worker, as Gunicorn workers might not inherit one.
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(setup_bot_application())
+        loop.close() # Close the loop after setup is complete
+    except RuntimeError as e:
+        logger.error(f"Error during Gunicorn on_starting hook: {e}")
+        if "cannot run an event loop while another loop is running" not in str(e):
+            raise
+    except Exception as e:
+        logger.error(f"Unexpected error in Gunicorn on_starting hook: {e}")
+        raise
+    logger.info("Telegram Application setup complete in Gunicorn worker.")
