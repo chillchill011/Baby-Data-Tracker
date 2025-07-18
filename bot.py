@@ -77,7 +77,7 @@ class BabyTrackerBot:
 
         # Initialize ping service for cold start
         # The URL will be set dynamically via RENDER_EXTERNAL_URL env var
-        self.ping_service = PingService("") # Placeholder, will be updated in run_bot
+        self.ping_service = PingService("") # Placeholder, will be updated in run_bot_for_render
 
     def _authenticate_google_sheets(self):
         """Authenticates with Google Sheets using service account credentials."""
@@ -405,35 +405,31 @@ def coldstart_endpoint():
     # The bot's /coldstart command handles the internal status.
     return "Bot is awake!", 200
 
-# --- Entry point for Local Polling ---
-if __name__ == "__main__":
-    # For local testing, we run in polling mode.
-    # For Render deployment, the 'startCommand' in render.yaml will run 'gunicorn bot:app'
-    # which will activate the Flask 'app' and its webhook/coldstart endpoints.
-    
-    # Ensure environment variables are loaded if using .env file
-    from dotenv import load_dotenv
-    load_dotenv()
+# --- Main function to set up and run the bot (for Render deployment) ---
+async def run_bot_for_render():
+    """Sets up the Telegram bot and Flask app for webhooks."""
+    global telegram_app_instance # Use the global instance
 
+    # Load environment variables (from Render's env vars, not .env file)
     bot_token = os.getenv("BOT_TOKEN")
     spreadsheet_id = os.getenv("GOOGLE_SHEET_ID")
     google_credentials_json_b64 = os.getenv("GOOGLE_CREDENTIALS_JSON_BASE64")
-    render_external_url = os.getenv("RENDER_EXTERNAL_URL") # Still needed for PingService URL
+    render_external_url = os.getenv("RENDER_EXTERNAL_URL") # Provided by Render
 
-    if not all([bot_token, spreadsheet_id, google_credentials_json_b64]):
-        logger.error("Missing one or more required environment variables for local polling. Please check BOT_TOKEN, GOOGLE_SHEET_ID, GOOGLE_CREDENTIALS_JSON_BASE64.")
+    if not all([bot_token, spreadsheet_id, google_credentials_json_b64, render_external_url]):
+        logger.error("Missing one or more required environment variables for Render deployment. Please check BOT_TOKEN, GOOGLE_SHEET_ID, GOOGLE_CREDENTIALS_JSON_BASE64, and RENDER_EXTERNAL_URL.")
+        # For deployment, it's critical to exit if env vars are missing
         exit(1)
 
-    # Initialize the bot instance
+    # Initialize the bot
     bot_instance = BabyTrackerBot(bot_token, spreadsheet_id, google_credentials_json_b64)
     
-    # Set the PingService URL (even if dummy for local)
-    coldstart_url = f"{render_external_url}/coldstart" # Will be http://localhost:8000/coldstart
+    # Set the PingService URL
+    coldstart_url = f"{render_external_url}/coldstart"
     bot_instance.ping_service.url = coldstart_url
     logger.info(f"PingService URL set to: {coldstart_url}")
 
     # Create the Application and pass your bot's token.
-    # This is the PTB application instance
     telegram_app_instance = Application.builder().token(bot_token).build()
 
     # Register command handlers
@@ -444,19 +440,51 @@ if __name__ == "__main__":
     telegram_app_instance.add_handler(CommandHandler("medication", bot_instance.medication))
     telegram_app_instance.add_handler(CommandHandler("summary", bot_instance.summary))
     telegram_app_instance.add_handler(CommandHandler("help", bot_instance.help_command))
-    telegram_app_instance.add_handler(CommandHandler("menu", bot_instance.menu_command)) # New menu command
+    telegram_app_instance.add_handler(CommandHandler("menu", bot_instance.menu_command))
     telegram_app_instance.add_handler(CommandHandler("coldstart", bot_instance.coldstart))
 
     # IMPORTANT: Order of MessageHandlers matters!
-    # Handle specific button presses first
     telegram_app_instance.add_handler(MessageHandler(filters.TEXT & filters.Regex("^(Poop|Pee|Feed|Medication|Summary|Cold Start|Help)$"), bot_instance.handle_keyboard_input))
-    
-    # Handle free text input (for follow-up questions or unrecognized messages)
     telegram_app_instance.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot_instance.handle_free_text_input))
 
+    # Set up webhook
+    webhook_path = "/webhook"
+    logger.info(f"Setting webhook to {render_external_url}{webhook_path}")
+    await telegram_app_instance.bot.set_webhook(url=f"{render_external_url}{webhook_path}")
 
-    logger.info("Starting bot in polling mode...")
-    # Run the bot in polling mode. This is a blocking call.
-    telegram_app_instance.run_polling(allowed_updates=Update.ALL_TYPES)
-    logger.info("Bot has stopped.")
+    logger.info("Telegram bot application prepared for webhook.")
+
+# This is the entry point for Gunicorn (web: gunicorn bot:app)
+# We need to ensure the PTB application is initialized when the Flask app starts.
+# A common way is to run an async setup function on Flask startup.
+@app.before_request
+def before_request_hook():
+    global telegram_app_instance
+    if telegram_app_instance is None:
+        # This will run the async setup only once when the first request comes in.
+        try:
+            asyncio.run(run_bot_for_render())
+        except RuntimeError as e:
+            if "cannot run an event loop while another loop is running" in str(e):
+                logger.warning("Event loop already running, skipping asyncio.run for setup.")
+            else:
+                raise
+
+# This __main__ block is only for direct execution (e.g., local testing of this deploy file)
+# It will NOT be executed by Gunicorn on Render.
+if __name__ == "__main__":
+    # This block is for local testing of the webhook setup, if desired.
+    # It will start the Flask server directly.
+    # For actual Render deployment, Gunicorn will handle this.
+    
+    from dotenv import load_dotenv
+    load_dotenv() # Load .env for local testing of this deploy file
+
+    # Run the bot setup asynchronously
+    asyncio.run(run_bot_for_render())
+    
+    # Run the Flask app
+    port = int(os.environ.get("PORT", 8000))
+    logger.info(f"Starting Flask app locally on port {port} for webhook testing.")
+    app.run(host="0.0.0.0", port=port)
 
