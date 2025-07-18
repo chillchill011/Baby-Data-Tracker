@@ -32,12 +32,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # --- Flask App for Webhook and Cold Start ---
+# Initialize the Flask app FIRST
 app = Flask(__name__)
-
-# Wrap the Flask app with WsgiToAsgi for Uvicorn compatibility
-# This makes the WSGI Flask app behave like an ASGI app for Uvicorn
-app = WsgiToAsgi(app)
-
 
 # Global variable to hold the bot instance
 telegram_app_instance = None
@@ -387,7 +383,7 @@ async def setup_bot_application():
     render_external_url = os.getenv("RENDER_EXTERNAL_URL")
 
     # --- DEBUGGING ENVIRONMENT VARIABLES ---
-    logger.info(f"DEBUG ENV: BOT_TOKEN length: {len(bot_token) if bot_token else 'None'}")
+    logger.info(f"DEBUG ENV: TELEGRAM_TOKEN length: {len(bot_token) if bot_token else 'None'}")
     logger.info(f"DEBUG ENV: SPREADSHEET_ID: {spreadsheet_id}")
     logger.info(f"DEBUG ENV: GOOGLE_CREDENTIALS_JSON_BASE64 length: {len(google_credentials_json_b64) if google_credentials_json_b64 else 'None'}")
     logger.info(f"DEBUG ENV: RENDER_EXTERNAL_URL: {render_external_url}")
@@ -488,6 +484,10 @@ if __name__ == "__main__":
 # Uvicorn directly imports the 'app' object.
 # We need to ensure setup_bot_application runs once when the module is loaded.
 # This will happen when Uvicorn imports 'bot.py'.
+# Wrap the Flask app with WsgiToAsgi for Uvicorn compatibility AFTER routes are defined
+# This makes the WSGI Flask app behave like an ASGI app for Uvicorn
+# app = WsgiToAsgi(app) # MOVED THIS LINE DOWN
+
 try:
     # Attempt to run the async setup when the module is loaded.
     # This might run in a different event loop context than Uvicorn's main loop,
