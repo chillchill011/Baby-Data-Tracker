@@ -3,9 +3,10 @@ services:
   - type: web
     name: baby-tracker-bot # Consider renaming to match your bot's purpose
     runtime: python
+    pythonVersion: 3.12 # Explicitly set Python version to a stable release
     buildCommand: pip install -r requirements.txt
     # Use the Procfile to define the start command for Gunicorn
-    startCommand: gunicorn bot_deploy:app
+    startCommand: gunicorn bot:app
     healthCheckPath: /webhook  # Health check for the webhook endpoint
     startupTimeout: 60        # Give it more time to start
     envVars:
