@@ -466,17 +466,15 @@ def coldstart_endpoint():
 # This __main__ block is only for direct execution (e.g., local testing of this deploy file)
 # It will NOT be executed by Uvicorn on Render.
 if __name__ == "__main__":
-    # This block is for local testing of the webhook setup.
-    # It will start the Flask server directly.
-    
-    from dotenv import load_dotenv
-    load_dotenv() # Load .env for local testing of this deploy file
-
     # Run the bot setup asynchronously for local testing
     asyncio.run(setup_bot_application())
     
     # Run the Flask app
     port = int(os.environ.get("PORT", 8000))
+    # Use app.run() for local development. For Render, Gunicorn/Werkzeug will serve.
+    # For Render, the 'startCommand' in render.yaml will typically be `gunicorn bot:app`
+    # where 'bot' is the module name and 'app' is the Flask instance.
+    # For simplicity here, we'll just run Flask directly, but be aware of production setups.
     logger.info(f"Starting Flask app locally on port {port} for webhook testing.")
     app.run(host="0.0.0.0", port=port)
 
@@ -484,10 +482,6 @@ if __name__ == "__main__":
 # Uvicorn directly imports the 'app' object.
 # We need to ensure setup_bot_application runs once when the module is loaded.
 # This will happen when Uvicorn imports 'bot.py'.
-# Wrap the Flask app with WsgiToAsgi for Uvicorn compatibility AFTER routes are defined
-# This makes the WSGI Flask app behave like an ASGI app for Uvicorn
-# app = WsgiToAsgi(app) # MOVED THIS LINE DOWN
-
 try:
     # Attempt to run the async setup when the module is loaded.
     # This might run in a different event loop context than Uvicorn's main loop,
@@ -511,3 +505,7 @@ except RuntimeError as e:
 except Exception as e:
     logger.error(f"Error during global app init: {e}")
     raise
+
+# Wrap the Flask app with WsgiToAsgi for Uvicorn compatibility AFTER routes are defined
+# This makes the WSGI Flask app behave like an ASGI app for Uvicorn
+app = WsgiToAsgi(app)
