@@ -20,8 +20,9 @@ from telegram.ext import (
 import gspread
 from google.oauth2.service_account import Credentials
 
-# Import WSGIMiddleware for Flask-Uvicorn compatibility
-from wsgi_asgi_connector import WSGIMiddleware
+# Import WsgiToAsgi from asgiref for Flask-Uvicorn compatibility
+from asgiref.wsgi import WsgiToAsgi
+
 
 # Configure logging
 logging.basicConfig(
@@ -33,9 +34,9 @@ logger = logging.getLogger(__name__)
 # --- Flask App for Webhook and Cold Start ---
 app = Flask(__name__)
 
-# Wrap the Flask app with WSGIMiddleware for Uvicorn compatibility
+# Wrap the Flask app with WsgiToAsgi for Uvicorn compatibility
 # This makes the WSGI Flask app behave like an ASGI app for Uvicorn
-app = WSGIMiddleware(app)
+app = WsgiToAsgi(app)
 
 
 # Global variable to hold the bot instance
@@ -386,7 +387,7 @@ async def setup_bot_application():
     render_external_url = os.getenv("RENDER_EXTERNAL_URL")
 
     # --- DEBUGGING ENVIRONMENT VARIABLES ---
-    logger.info(f"DEBUG ENV: TELEGRAM_TOKEN length: {len(bot_token) if bot_token else 'None'}")
+    logger.info(f"DEBUG ENV: BOT_TOKEN length: {len(bot_token) if bot_token else 'None'}")
     logger.info(f"DEBUG ENV: SPREADSHEET_ID: {spreadsheet_id}")
     logger.info(f"DEBUG ENV: GOOGLE_CREDENTIALS_JSON_BASE64 length: {len(google_credentials_json_b64) if google_credentials_json_b64 else 'None'}")
     logger.info(f"DEBUG ENV: RENDER_EXTERNAL_URL: {render_external_url}")
