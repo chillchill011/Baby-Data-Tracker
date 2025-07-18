@@ -20,6 +20,9 @@ from telegram.ext import (
 import gspread
 from google.oauth2.service_account import Credentials
 
+# Import WsgiToAsgi from asgiref for Flask-Uvicorn compatibility
+from asgiref.wsgi import WsgiToAsgi
+
 
 # Configure logging
 logging.basicConfig(
@@ -433,7 +436,7 @@ async def webhook_handler():
         return "Error", 500
     finally: # Added finally block to ensure 'ok' is always returned
         logger.info("Webhook handler finished.")
-        return "ok"
+        # Removed the return "ok" from here, as it's already returned in try/except.
 
 
 @flask_app.route("/coldstart", methods=["GET"]) # Use flask_app.route
@@ -441,6 +444,11 @@ def coldstart_endpoint():
     """Simple endpoint to keep Render service awake."""
     logger.info("Coldstart endpoint hit.")
     return "Bot is awake!", 200
+
+# Wrap the Flask app with WsgiToAsgi for Uvicorn compatibility AFTER routes are defined
+# This makes the WSGI Flask app behave like an ASGI app for Uvicorn
+app = WsgiToAsgi(flask_app) # Wrap flask_app and assign to 'app'
+
 
 # This __main__ block is only for direct execution (e.g., local testing of this deploy file)
 # It will NOT be executed by Uvicorn on Render.
@@ -484,7 +492,3 @@ except RuntimeError as e:
 except Exception as e:
     logger.error(f"Error during global app init: {e}")
     raise
-
-# Wrap the Flask app with WsgiToAsgi for Uvicorn compatibility AFTER routes are defined
-# This makes the WSGI Flask app behave like an ASGI app for Uvicorn
-app = WsgiToAsgi(flask_app) # Wrap flask_app and assign to 'app'
