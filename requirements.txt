@@ -5,6 +5,4 @@ google-auth-oauthlib==1.2.0
 google-api-python-client==2.126.0
 python-dotenv==1.0.1
 requests==2.32.3
-gunicorn==22.0.0
-gevent==24.2.1 # Ensure this is present
-greenlet==3.0.1 # Add greenlet, often a dependency for gevent
+uvicorn==0.30.1 # Added for async server

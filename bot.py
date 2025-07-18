@@ -82,20 +82,9 @@ class BabyTrackerBot:
         try:
             # Decode base64 credentials and load as JSON
             decoded_string = base64.b64decode(self.credentials_json_b64).decode('utf-8')
-            
-            # Removed debug prints for deployment version
-            # print(f"--- DEBUG: Decoded string length: {len(decoded_string)}")
-            # print(f"--- DEBUG: Decoded string (first 200 chars): {decoded_string[:200]}")
-
-            credentials_info = json.loads(decoded_string) # This line uses decoded_string
-            
-            # Define the scope for Google Sheets API
+            credentials_info = json.loads(decoded_string)
             scope = ['https://www.googleapis.com/auth/spreadsheets']
-            
-            # Create credentials object
             creds = Credentials.from_service_account_info(credentials_info, scopes=scope)
-            
-            # Authorize gspread client
             gc = gspread.authorize(creds)
             logger.info("Google Sheets authentication successful.")
             return gc
@@ -383,14 +372,20 @@ async def setup_bot_application():
     global bot_instance_global # Access the global bot instance
 
     # Load environment variables (from Render's env vars)
-    bot_token = os.getenv("TELEGRAM_TOKEN") # Use TELEGRAM_TOKEN for Render
+    bot_token = os.getenv("TELEGRAM_TOKEN")
     spreadsheet_id = os.getenv("SPREADSHEET_ID")
     google_credentials_json_b64 = os.getenv("GOOGLE_CREDENTIALS_JSON_BASE64")
-    render_external_url = os.getenv("RENDER_EXTERNAL_URL") # Provided by Render
+    render_external_url = os.getenv("RENDER_EXTERNAL_URL")
 
-    if not all([bot_token, spreadsheet_id, google_credentials_json_b64, render_external_url]):
-        logger.error("Missing one or more required environment variables for Render deployment. Please check TELEGRAM_TOKEN, SPREADSHEET_ID, GOOGLE_CREDENTIALS_JSON_BASE64, and RENDER_EXTERNAL_URL.")
-        exit(1) # Critical for deployment, exit if missing
+    # Explicitly check if RENDER_EXTERNAL_URL is None or empty string
+    if not render_external_url:
+        logger.error("RENDER_EXTERNAL_URL environment variable is missing or empty. Please set it in Render's dashboard.")
+        # We can't proceed without this. Exit the application.
+        exit(1)
+
+    if not all([bot_token, spreadsheet_id, google_credentials_json_b64]):
+        logger.error("Missing one or more required environment variables (TELEGRAM_TOKEN, SPREADSHEET_ID, GOOGLE_CREDENTIALS_JSON_BASE64).")
+        exit(1)
 
     # Initialize the bot instance
     bot_instance_global = BabyTrackerBot(bot_token, spreadsheet_id, google_credentials_json_b64)
@@ -431,7 +426,7 @@ async def setup_bot_application():
 
 # --- Flask Endpoints ---
 # These routes are for when the bot is deployed on Render using webhooks.
-# Gunicorn will import this module and run the 'app' Flask instance.
+# Uvicorn will import this module and run the 'app' Flask instance.
 @app.route("/webhook", methods=["POST"])
 async def webhook_handler():
     """Handle incoming Telegram updates."""
@@ -457,7 +452,7 @@ def coldstart_endpoint():
     return "Bot is awake!", 200
 
 # This __main__ block is only for direct execution (e.g., local testing of this deploy file)
-# It will NOT be executed by Gunicorn on Render.
+# It will NOT be executed by Uvicorn on Render.
 if __name__ == "__main__":
     # This block is for local testing of the webhook setup.
     # It will start the Flask server directly.
@@ -473,38 +468,31 @@ if __name__ == "__main__":
     logger.info(f"Starting Flask app locally on port {port} for webhook testing.")
     app.run(host="0.0.0.0", port=port)
 
-# Gunicorn startup hook
-# This function will be called by Gunicorn when it starts a worker.
-def on_starting(server, worker):
-    """
-    Gunicorn hook: Called just before the master process is ready to fork workers.
-    This is where we can perform global setup that needs to happen once per worker.
-    """
-    logger.info("Gunicorn worker starting. Initializing Telegram Application...")
-    # Run the async setup function in a new event loop for this worker process
-    try:
-        # Create a new event loop for this worker, as Gunicorn workers might not inherit one.
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        # Run the async setup function
-        loop.run_until_complete(setup_bot_application())
-        
-        # The loop should ideally not be closed immediately if it's meant to serve async tasks
-        # throughout the worker's lifecycle. However, for a simple setup like this,
-        # where the main async tasks are setting up the webhook and initializing the app,
-        # closing it might be acceptable if no other long-running async tasks are expected
-        # within the on_starting hook.
-        # For robustness, we might not close it here, but let the worker manage it.
-        # Let's remove loop.close() for now to avoid potential issues.
-        # loop.close() # Removed this line
-
-    except RuntimeError as e:
-        logger.error(f"Error during Gunicorn on_starting hook: {e}")
-        if "cannot run an event loop while another loop is running" not in str(e):
-            raise
-    except Exception as e:
-        logger.error(f"Unexpected error in Gunicorn on_starting hook: {e}")
-        raise
-    logger.info("Telegram Application setup complete in Gunicorn worker.")
+# Global initialization for Uvicorn
+# Uvicorn directly imports the 'app' object.
+# We need to ensure setup_bot_application runs once when the module is loaded.
+# This will happen when Uvicorn imports 'bot.py'.
+try:
+    # Attempt to run the async setup when the module is loaded.
+    # This might run in a different event loop context than Uvicorn's main loop,
+    # but it ensures initialization happens.
+    # We use asyncio.get_event_loop() and check if it's running to avoid RuntimeError.
+    loop = asyncio.get_event_loop()
+    if loop.is_running():
+        logger.warning("Event loop already running, scheduling PTB setup as a task.")
+        loop.create_task(setup_bot_application())
+    else:
+        asyncio.run(setup_bot_application())
+except RuntimeError as e:
+    # This specific RuntimeError happens if asyncio.run() is called when a loop is already running.
+    # For web servers like Uvicorn, they manage their own loop.
+    # We log a warning and assume Uvicorn's loop will handle subsequent async calls.
+    if "cannot run an event loop while another loop is running" in str(e):
+        logger.warning("Event loop already running during global setup. This is expected with Uvicorn.")
+    else:
+        logger.error(f"Failed to run global app init: {e}")
+        raise # Re-raise other unexpected RuntimeErrors
+except Exception as e:
+    logger.error(f"Error during global app init: {e}")
+    raise
 
