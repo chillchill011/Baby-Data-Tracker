@@ -5,7 +5,7 @@ import base64
 from datetime import datetime, timedelta
 import asyncio
 import requests # For the coldstart ping
-from flask import Flask, request # For webhook and coldstart endpoint
+from flask import Flask, request # For webhook and coldstart endpoint (only active on Render)
 
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import (
@@ -27,8 +27,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# --- Flask App for Webhook and Cold Start ---
-# This 'app' instance will be run by Gunicorn on Render.
+# --- Flask App for Webhook and Cold Start (Only active when served by Gunicorn/Werkzeug on Render) ---
+# This 'app' instance is intended for Render's webhook setup.
+# For local polling, it won't be explicitly run.
 app = Flask(__name__)
 
 # Global variable to hold the bot instance
@@ -76,8 +77,8 @@ class BabyTrackerBot:
         self.worksheet = self._get_or_create_worksheet("BabyLog") # Default sheet for logging
 
         # Initialize ping service for cold start
-        # The URL will be set dynamically via RENDER_EXTERNAL_URL env var
-        self.ping_service = PingService("") # Placeholder, will be updated in run_bot
+        # The URL will be set dynamically or via an env var in main()
+        self.ping_service = PingService("") # Placeholder, will be updated in main
 
     def _authenticate_google_sheets(self):
         """Authenticates with Google Sheets using service account credentials."""
@@ -85,9 +86,11 @@ class BabyTrackerBot:
             # Decode base64 credentials and load as JSON
             decoded_string = base64.b64decode(self.credentials_json_b64).decode('utf-8')
             
-            # Removed debug prints for deployment version
-            # print(f"--- DEBUG: Decoded string length: {len(decoded_string)}")
-            # print(f"--- DEBUG: Decoded string (first 200 chars): {decoded_string[:200]}")
+            # Debug prints (now correctly placed after decoded_string is defined)
+            print(f"--- DEBUG: Decoded string length: {len(decoded_string)}")
+            print(f"--- DEBUG: Decoded string (first 200 chars): {decoded_string[:200]}")
+            # print("--- DEBUG: Full Decoded String (for inspection):") # Uncomment if you need to see the whole thing
+            # print(decoded_string) # Uncomment if you need to see the whole thing
 
             credentials_info = json.loads(decoded_string) # This line uses decoded_string
             

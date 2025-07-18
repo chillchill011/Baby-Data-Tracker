@@ -1,0 +1,19 @@
+# render.yaml
+services:
+  - type: web
+    name: baby-tracker-bot # Consider renaming to match your bot's purpose
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    # Use the Procfile to define the start command for Gunicorn
+    startCommand: gunicorn bot_deploy:app
+    healthCheckPath: /webhook  # Health check for the webhook endpoint
+    startupTimeout: 60        # Give it more time to start
+    envVars:
+      - key: TELEGRAM_TOKEN
+        sync: false # Keep this unsynced for security
+      - key: SPREADSHEET_ID
+        sync: false # Keep this unsynced for security
+      - key: GOOGLE_CREDENTIALS_JSON_BASE64
+        sync: false # Keep this unsynced for security
+      - key: RENDER_EXTERNAL_URL # Render automatically provides this URL
+        sync: false # This can be synced or unsynced, Render populates it
