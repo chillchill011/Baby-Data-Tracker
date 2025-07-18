@@ -4,7 +4,7 @@ import json
 import base64
 from datetime import datetime, timedelta
 import asyncio
-import requests # For the coldstart ping
+import requests # Still needed for potential future external pings, but not for self-pinging here
 from flask import Flask, request # For webhook and coldstart endpoint
 
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
@@ -19,9 +19,6 @@ from telegram.ext import (
 # Google Sheets imports
 import gspread
 from google.oauth2.service_account import Credentials
-
-# Import WsgiToAsgi from asgiref for Flask-Uvicorn compatibility
-from asgiref.wsgi import WsgiToAsgi
 
 
 # Configure logging
@@ -39,32 +36,7 @@ flask_app = Flask(__name__)
 telegram_app_instance = None
 bot_instance_global = None # Also make bot_instance global for access in setup
 
-# --- Ping Service for Cold Start ---
-class PingService:
-    def __init__(self, url):
-        self.url = url
-        self.is_active = False
-        self.last_ping = None
-
-    async def activate(self): # Made activate async
-        """Activate the service with a single ping."""
-        try:
-            # Use asyncio.to_thread to run the synchronous requests.get in a separate thread
-            response = await asyncio.to_thread(requests.get, self.url)
-            self.last_ping = datetime.now()
-            self.is_active = True
-            logger.info(f"Ping successful: {response.status_code}")
-            return True
-        except Exception as e:
-            logger.error(f"Ping failed: {e}")
-            return False
-
-    def get_status(self):
-        """Get current status of the service."""
-        return {
-            'active': self.is_active,
-            'last_ping': self.last_ping.strftime('%Y-%m-%d %H:%M:%S') if self.last_ping else None
-        }
+# Removed PingService class entirely as it's no longer used for internal bot logic.
 
 # --- Baby Tracker Bot Class ---
 class BabyTrackerBot:
@@ -80,8 +52,7 @@ class BabyTrackerBot:
         self.spreadsheet = self.gc.open_by_key(self.spreadsheet_id)
         self.worksheet = self._get_or_create_worksheet("BabyLog") # Default sheet for logging
 
-        # Initialize ping service for cold start
-        self.ping_service = PingService("") # Placeholder, will be updated in setup_bot_application
+        # Removed ping_service initialization here as it's no longer used.
 
     def _authenticate_google_sheets(self):
         """Authenticates with Google Sheets using service account credentials."""
@@ -291,34 +262,22 @@ class BabyTrackerBot:
 
     async def coldstart(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle the /coldstart command to activate the bot."""
-        logger.info("coldstart command received.") # New log
-        if not self.ping_service.is_active:
-            logger.info("Ping service is not active, attempting to activate.") # New log
-            if await self.ping_service.activate(): # Added await here
-                logger.info("Ping service activated successfully, sending success message.") # New log
-                await update.message.reply_text(
-                    "🟢 Bot Successfully Activated!\n\n"
-                    "I'm awake and ready to help you track baby activities.\n\n"
-                    "You can:\n"
-                    "• Log activities like /feed, /poop, /pee, /medication\n"
-                    "• Get summaries with /summary\n"
-                    "• View all commands with /start"
-                )
-            else:
-                logger.error("Ping service activation failed, sending error message.") # New log
-                await update.message.reply_text("❌ Failed to activate bot. Please try again.")
-        else:
-            logger.info("Ping service is already active, sending info message.") # New log
-            await update.message.reply_text(
-                "ℹ️ I'm already active and ready!\n\n"
-                "You can start logging activities."
-            )
+        logger.info("coldstart command received.")
+        # This command now simply confirms the bot is awake, no self-pinging.
+        await update.message.reply_text(
+            "🟢 Bot is awake and ready!\n\n"
+            "You can:\n"
+            "• Log activities like /feed, /poop, /pee, /medication\n"
+            "• Get summaries with /summary\n"
+            "• View all commands with /start"
+        )
+        logger.info("Coldstart response sent (simplified).")
     
     async def handle_keyboard_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handles text messages that correspond to keyboard buttons."""
         text = update.message.text
         user_id = update.effective_user.id
-        logger.info(f"Handling keyboard input: {text} from user {user_id}") # New log
+        logger.info(f"Handling keyboard input: {text} from user {user_id}")
 
         if text == "Poop":
             await self.poop(update, context)
@@ -345,12 +304,12 @@ class BabyTrackerBot:
         """Handles free text input, especially after a button press for Feed/Medication."""
         text = update.message.text
         user_id = update.effective_user.id
-        logger.info(f"Handling free text input: {text} from user {user_id}") # New log
+        logger.info(f"Handling free text input: {text} from user {user_id}")
         
         # Check if the user is awaiting specific input
         if user_id in context.user_data and 'awaiting_input_for' in context.user_data[user_id]:
             awaiting_for = context.user_data[user_id]['awaiting_input_for']
-            logger.info(f"User {user_id} is awaiting input for: {awaiting_for}") # New log
+            logger.info(f"User {user_id} is awaiting input for: {awaiting_for}")
 
             if awaiting_for == 'feed':
                 if text.isdigit():
@@ -385,14 +344,14 @@ async def setup_bot_application():
     global bot_instance_global # Access the global bot instance
 
     # Load environment variables (from Render's env vars)
-    bot_token = os.getenv("BOT_TOKEN") # Changed from TELEGRAM_TOKEN
-    spreadsheet_id = os.getenv("GOOGLE_SHEET_ID") # Changed from SPREADSHEET_ID
+    bot_token = os.getenv("BOT_TOKEN")
+    spreadsheet_id = os.getenv("GOOGLE_SHEET_ID")
     google_credentials_json_b64 = os.getenv("GOOGLE_CREDENTIALS_JSON_BASE64")
     render_external_url = os.getenv("RENDER_EXTERNAL_URL")
 
     # --- DEBUGGING ENVIRONMENT VARIABLES ---
-    logger.info(f"DEBUG ENV: TELEGRAM_TOKEN length: {len(bot_token) if bot_token else 'None'}")
-    logger.info(f"DEBUG ENV: SPREADSHEET_ID: {spreadsheet_id}")
+    logger.info(f"DEBUG ENV: BOT_TOKEN length: {len(bot_token) if bot_token else 'None'}")
+    logger.info(f"DEBUG ENV: GOOGLE_SHEET_ID: {spreadsheet_id}")
     logger.info(f"DEBUG ENV: GOOGLE_CREDENTIALS_JSON_BASE64 length: {len(google_credentials_json_b64) if google_credentials_json_b64 else 'None'}")
     logger.info(f"DEBUG ENV: RENDER_EXTERNAL_URL: {render_external_url}")
     # --- END DEBUGGING ---
@@ -410,10 +369,7 @@ async def setup_bot_application():
     # Initialize the bot instance
     bot_instance_global = BabyTrackerBot(bot_token, spreadsheet_id, google_credentials_json_b64)
     
-    # Set the PingService URL
-    coldstart_url = f"{render_external_url}/coldstart"
-    bot_instance_global.ping_service.url = coldstart_url
-    logger.info(f"PingService URL set to: {coldstart_url}")
+    # Removed PingService URL setup here as it's no longer used for internal pinging.
 
     # Create the Application and pass your bot's token.
     telegram_app_instance = Application.builder().token(bot_token).build()
@@ -450,16 +406,16 @@ async def setup_bot_application():
 @flask_app.route("/webhook", methods=["POST"]) # Use flask_app.route
 async def webhook_handler():
     """Handle incoming Telegram updates."""
-    logger.info("Webhook handler received a request.") # New log
+    logger.info("Webhook handler received a request.")
     try:
         # Read the raw request body
-        request_body = request.get_data() # REMOVED await here
+        request_body = request.get_data()
         update_json_str = request_body.decode('utf-8')
         
-        logger.info(f"Received raw update body: {update_json_str}") # New log
+        logger.info(f"Received raw update body: {update_json_str}")
 
         update_json = json.loads(update_json_str)
-        logger.info(f"Parsed update JSON: {update_json}") # New log
+        logger.info(f"Parsed update JSON: {update_json}")
 
         global telegram_app_instance
         if telegram_app_instance is None:
@@ -467,14 +423,18 @@ async def webhook_handler():
             return "Bot not ready", 500
 
         update = Update.de_json(update_json, telegram_app_instance.bot)
-        logger.info(f"Processing update: {update}") # New log
+        logger.info(f"Processing update: {update}")
         
         await telegram_app_instance.process_update(update)
-        logger.info("Update processed successfully.") # New log
+        logger.info("Update processed successfully.")
         return "ok"
     except Exception as e:
         logger.error(f"Error in webhook_handler: {e}", exc_info=True)
         return "Error", 500
+    finally: # Added finally block to ensure 'ok' is always returned
+        logger.info("Webhook handler finished.")
+        return "ok"
+
 
 @flask_app.route("/coldstart", methods=["GET"]) # Use flask_app.route
 def coldstart_endpoint():
