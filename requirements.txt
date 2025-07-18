@@ -5,4 +5,5 @@ google-auth-oauthlib==1.2.0
 google-api-python-client==2.126.0
 python-dotenv==1.0.1
 requests==2.32.3
-uvicorn==0.30.1 # Added for async server
+uvicorn==0.30.1
+wsgi-asgi-connector==1.0.1 # Added for Flask-Uvicorn compatibility

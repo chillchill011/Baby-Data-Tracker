@@ -20,6 +20,9 @@ from telegram.ext import (
 import gspread
 from google.oauth2.service_account import Credentials
 
+# Import WSGIMiddleware for Flask-Uvicorn compatibility
+from wsgi_asgi_connector import WSGIMiddleware
+
 # Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -29,6 +32,11 @@ logger = logging.getLogger(__name__)
 
 # --- Flask App for Webhook and Cold Start ---
 app = Flask(__name__)
+
+# Wrap the Flask app with WSGIMiddleware for Uvicorn compatibility
+# This makes the WSGI Flask app behave like an ASGI app for Uvicorn
+app = WSGIMiddleware(app)
+
 
 # Global variable to hold the bot instance
 telegram_app_instance = None
