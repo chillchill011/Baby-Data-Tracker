@@ -94,10 +94,16 @@ class BabyTrackerBot:
             [KeyboardButton("Poop"), KeyboardButton("Pee")],
             [KeyboardButton("Feed"), KeyboardButton("Medication")],
 <<<<<<< HEAD
+<<<<<<< HEAD
             [KeyboardButton("Vitamin D")],
             [KeyboardButton("Summary (Today)"), KeyboardButton("Summary (7 Days)")],
             [KeyboardButton("Summary (30 Days)"), KeyboardButton("Summary (90 Days)")],
             [KeyboardButton("Cold Start"), KeyboardButton("Help")]
+=======
+            [KeyboardButton("Vitamin D")], # New button for Vitamin D
+            [KeyboardButton("Summary"), KeyboardButton("Cold Start")],
+            [KeyboardButton("Help")]
+>>>>>>> parent of 3580d1b (Summary expansion)
 =======
             [KeyboardButton("Vitamin D")], # New button for Vitamin D
             [KeyboardButton("Summary"), KeyboardButton("Cold Start")],
@@ -117,7 +123,11 @@ class BabyTrackerBot:
             "• `/medication [name]`: Log medication (e.g., `/medication Tylenol`)\n"
             "• `/vitamind`: Log Vitamin D medication\n"
 <<<<<<< HEAD
+<<<<<<< HEAD
             "• `/summary [today|yesterday|7days|1month|3month]`: Get a summary for specific periods (e.g., `/summary 7days` or just `/summary` for all)\n"
+=======
+            "• `/summary [today|yesterday|7days|1month]`: Get a summary for specific periods (e.g., `/summary 7days` or just `/summary` for all)\n"
+>>>>>>> parent of 3580d1b (Summary expansion)
 =======
             "• `/summary [today|yesterday|7days|1month]`: Get a summary for specific periods (e.g., `/summary 7days` or just `/summary` for all)\n"
 >>>>>>> parent of 3580d1b (Summary expansion)
@@ -247,6 +257,7 @@ class BabyTrackerBot:
             yesterday_ist = today_ist - timedelta(days=1)
             
 <<<<<<< HEAD
+<<<<<<< HEAD
             # Initialize summary dictionaries with new 'vitamin_d' field
             summary_today = {'pee': 0, 'poop': 0, 'feed_count': 0, 'feed_total_mins': 0, 'medications': 0, 'vitamin_d': 0}
             summary_yesterday = {'pee': 0, 'poop': 0, 'feed_count': 0, 'feed_total_mins': 0, 'medications': 0, 'vitamin_d': 0}
@@ -260,10 +271,15 @@ class BabyTrackerBot:
             records_90_days = []
 
 =======
+=======
+>>>>>>> parent of 3580d1b (Summary expansion)
             summary_today = {'pee': 0, 'poop': 0, 'feed_count': 0, 'feed_total_mins': 0, 'medications': 0}
             summary_yesterday = {'pee': 0, 'poop': 0, 'feed_count': 0, 'feed_total_mins': 0, 'medications': 0}
             summary_last_7_days = {'pee': 0, 'poop': 0, 'feed_count': 0, 'feed_total_mins': 0, 'medications': 0}
             summary_last_30_days = {'pee': 0, 'poop': 0, 'feed_count': 0, 'feed_total_mins': 0, 'medications': 0}
+<<<<<<< HEAD
+>>>>>>> parent of 3580d1b (Summary expansion)
+=======
 >>>>>>> parent of 3580d1b (Summary expansion)
 
             for record in all_records:
@@ -313,11 +329,14 @@ class BabyTrackerBot:
                     if today_ist - record_date_ist < timedelta(days=30):
                         update_summary_dict(summary_last_30_days, activity_type, value_details)
 <<<<<<< HEAD
+<<<<<<< HEAD
                         records_30_days.append(record)
                     
                     if today_ist - record_date_ist < timedelta(days=90):
                         update_summary_dict(summary_last_90_days, activity_type, value_details)
                         records_90_days.append(record)
+=======
+>>>>>>> parent of 3580d1b (Summary expansion)
 =======
 >>>>>>> parent of 3580d1b (Summary expansion)
 
@@ -336,6 +355,7 @@ class BabyTrackerBot:
                     f"  Medications: {data['medications']}\n\n"
                 )
 <<<<<<< HEAD
+<<<<<<< HEAD
                 
                 if period_days is None: # For Today/Yesterday
                     formatted_str += f"  Vitamin D: {data['vitamin_d']} ✅\n"
@@ -344,6 +364,8 @@ class BabyTrackerBot:
                     formatted_str += f"  Vitamin D: {data['vitamin_d']} [Given] / {period_days} Days\n"
                     formatted_str += f"  Medications: {data['medications']}\n\n"
                 return formatted_str
+=======
+>>>>>>> parent of 3580d1b (Summary expansion)
 =======
 >>>>>>> parent of 3580d1b (Summary expansion)
 
@@ -357,6 +379,7 @@ class BabyTrackerBot:
             elif arg == 'yesterday':
                 response_message += format_summary("Previous Day", summary_yesterday, f"({yesterday_ist.strftime('%Y-%m-%d')})")
             elif arg == '7days':
+<<<<<<< HEAD
 <<<<<<< HEAD
                 response_message += format_summary("Last 7 Days", summary_last_7_days, period_days=7)
                 graph_data = records_7_days
@@ -375,6 +398,16 @@ class BabyTrackerBot:
                 response_message += format_summary("Last 7 Days", summary_last_7_days, period_days=7)
                 response_message += format_summary("Last 1 Month", summary_last_30_days, period_days=30)
                 response_message += format_summary("Last 3 Months", summary_last_90_days, period_days=90)
+=======
+                response_message += format_summary("Last 7 Days", summary_last_7_days)
+            elif arg == '1month':
+                response_message += format_summary("Last 1 Month", summary_last_30_days)
+            else:
+                response_message += format_summary("Current Day", summary_today, f"({today_ist.strftime('%Y-%m-%d')})")
+                response_message += format_summary("Previous Day", summary_yesterday, f"({yesterday_ist.strftime('%Y-%m-%d')})")
+                response_message += format_summary("Last 7 Days", summary_last_7_days)
+                response_message += format_summary("Last 1 Month", summary_last_30_days)
+>>>>>>> parent of 3580d1b (Summary expansion)
 =======
                 response_message += format_summary("Last 7 Days", summary_last_7_days)
             elif arg == '1month':
@@ -434,6 +467,7 @@ class BabyTrackerBot:
         elif text == "Vitamin D": # New handler for Vitamin D button
             await self.vitamind(update, context)
 <<<<<<< HEAD
+<<<<<<< HEAD
         elif text == "Summary (Today)":
             context.args = ['today']
             await self.summary(update, context)
@@ -446,6 +480,10 @@ class BabyTrackerBot:
         elif text == "Summary (90 Days)":
             context.args = ['3month']
             await self.summary(update, context)
+=======
+        elif text == "Summary":
+            await update.message.reply_text("Please type `/summary` followed by `today`, `yesterday`, `7days`, or `1month` (e.g., `/summary 7days`). Or just `/summary` for all.")
+>>>>>>> parent of 3580d1b (Summary expansion)
 =======
         elif text == "Summary":
             await update.message.reply_text("Please type `/summary` followed by `today`, `yesterday`, `7days`, or `1month` (e.g., `/summary 7days`). Or just `/summary` for all.")
