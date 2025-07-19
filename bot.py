@@ -26,6 +26,11 @@ from asgiref.wsgi import WsgiToAsgi
 # Import pytz for timezone handling
 import pytz
 
+# Import matplotlib for plotting graphs
+import matplotlib.pyplot as plt
+import io
+import pandas as pd # Used for easier data aggregation for plotting
+
 # Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -89,8 +94,8 @@ class BabyTrackerBot:
             [KeyboardButton("Poop"), KeyboardButton("Pee")],
             [KeyboardButton("Feed"), KeyboardButton("Medication")],
             [KeyboardButton("Vitamin D")],
-            [KeyboardButton("Summary (Today)"), KeyboardButton("Summary (7 Days)")], # Changed summary buttons
-            [KeyboardButton("Summary (30 Days)"), KeyboardButton("Summary (90 Days)")], # Added 90 Days summary button
+            [KeyboardButton("Summary (Today)"), KeyboardButton("Summary (7 Days)")],
+            [KeyboardButton("Summary (30 Days)"), KeyboardButton("Summary (90 Days)")],
             [KeyboardButton("Cold Start"), KeyboardButton("Help")]
         ]
         return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
@@ -105,7 +110,7 @@ class BabyTrackerBot:
             "• `/feed (minutes)`: Log a feeding session (e.g., `/feed 15`)\n"
             "• `/medication [name]`: Log medication (e.g., `/medication Tylenol`)\n"
             "• `/vitamind`: Log Vitamin D medication\n"
-            "• `/summary [today|yesterday|7days|1month|3month]`: Get a summary for specific periods (e.g., `/summary 7days` or just `/summary` for all)\n" # Updated summary help
+            "• `/summary [today|yesterday|7days|1month|3month]`: Get a summary for specific periods (e.g., `/summary 7days` or just `/summary` for all)\n"
             "• `/coldstart`: Wake up the bot if it's inactive (for Render.com free tier)\n"
             "• `/help` or `/menu`: Show this message and the keyboard again"
         )
@@ -149,6 +154,78 @@ class BabyTrackerBot:
         """Logs Vitamin D medication directly."""
         await self._log_activity(update, "Medication", "Vitamin D")
 
+    def _generate_activity_bar_chart(self, records_for_period, period_name):
+        """Generates a bar chart of daily activity counts for a given period."""
+        if not records_for_period:
+            return None
+
+        # Prepare data for plotting
+        df = pd.DataFrame(records_for_period)
+        
+        # Convert Timestamp to datetime objects and localize
+        # Handle both '%Y-%m-%d %H:%M:%S' and '%Y-%m-%d %H:%M' formats
+        def parse_and_localize_timestamp(ts_str):
+            try:
+                dt_naive = datetime.strptime(ts_str, '%Y-%m-%d %H:%M:%S')
+            except ValueError:
+                dt_naive = datetime.strptime(ts_str, '%Y-%m-%d %H:%M')
+            return IST.localize(dt_naive).date()
+
+        df['Date'] = df['Timestamp'].apply(parse_and_localize_timestamp)
+        
+        # Adjust 'Activity Type' for Vitamin D to differentiate
+        df['Activity Type Plot'] = df.apply(
+            lambda row: 'Vitamin D' if row['Activity Type'] == 'Medication' and row['Value/Details'] == 'Vitamin D'
+            else row['Activity Type'], axis=1
+        )
+        
+        # Filter out original 'Medication' if it's Vitamin D for plotting purposes
+        # And handle 'Feed' to just count occurrences, not duration for this chart
+        activity_counts = df.groupby(['Date', 'Activity Type Plot']).size().unstack(fill_value=0)
+
+        # Ensure all expected columns are present, even if no data for them
+        expected_activities = ['Poop', 'Pee', 'Feed', 'Medication', 'Vitamin D']
+        for activity in expected_activities:
+            if activity not in activity_counts.columns:
+                activity_counts[activity] = 0
+        
+        # Sort by date
+        activity_counts = activity_counts.sort_index()
+
+        # Plotting
+        fig, ax = plt.subplots(figsize=(10, 6)) # Adjust figure size as needed
+        
+        # Define colors for consistency
+        colors = {
+            'Poop': '#8B4513', # SaddleBrown
+            'Pee': '#FFD700',  # Gold
+            'Feed': '#4682B4', # SteelBlue
+            'Medication': '#800080', # Purple
+            'Vitamin D': '#228B22' # ForestGreen
+        }
+        
+        # Get the activities that actually have data to plot
+        activities_to_plot = [col for col in expected_activities if col in activity_counts.columns and activity_counts[col].sum() > 0]
+
+        # Plot bars for each activity type
+        activity_counts[activities_to_plot].plot(kind='bar', ax=ax, color=[colors.get(x, '#CCCCCC') for x in activities_to_plot], width=0.8)
+
+        ax.set_title(f'Daily Activity Counts - {period_name}', fontsize=16)
+        ax.set_xlabel('Date (IST)', fontsize=12)
+        ax.set_ylabel('Count', fontsize=12)
+        ax.tick_params(axis='x', rotation=45)
+        ax.legend(title='Activity Type')
+        ax.grid(axis='y', linestyle='--', alpha=0.7)
+        plt.tight_layout()
+
+        # Save plot to a BytesIO object
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png')
+        buf.seek(0)
+        plt.close(fig) # Close the plot to free memory
+        return buf
+
+
     async def summary(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Provides a summary of activities for various periods."""
         try:
@@ -164,7 +241,13 @@ class BabyTrackerBot:
             summary_yesterday = {'pee': 0, 'poop': 0, 'feed_count': 0, 'feed_total_mins': 0, 'medications': 0, 'vitamin_d': 0}
             summary_last_7_days = {'pee': 0, 'poop': 0, 'feed_count': 0, 'feed_total_mins': 0, 'medications': 0, 'vitamin_d': 0}
             summary_last_30_days = {'pee': 0, 'poop': 0, 'feed_count': 0, 'feed_total_mins': 0, 'medications': 0, 'vitamin_d': 0}
-            summary_last_90_days = {'pee': 0, 'poop': 0, 'feed_count': 0, 'feed_total_mins': 0, 'medications': 0, 'vitamin_d': 0} # New 90-day summary
+            summary_last_90_days = {'pee': 0, 'poop': 0, 'feed_count': 0, 'feed_total_mins': 0, 'medications': 0, 'vitamin_d': 0}
+
+            # Lists to hold records for plotting
+            records_7_days = []
+            records_30_days = []
+            records_90_days = []
+
 
             for record in all_records:
                 try:
@@ -211,12 +294,15 @@ class BabyTrackerBot:
 
                     if today_ist - record_date_ist < timedelta(days=7):
                         update_summary_dict(summary_last_7_days, activity_type, value_details)
+                        records_7_days.append(record)
 
                     if today_ist - record_date_ist < timedelta(days=30):
                         update_summary_dict(summary_last_30_days, activity_type, value_details)
+                        records_30_days.append(record)
                     
-                    if today_ist - record_date_ist < timedelta(days=90): # New 90-day condition
+                    if today_ist - record_date_ist < timedelta(days=90):
                         update_summary_dict(summary_last_90_days, activity_type, value_details)
+                        records_90_days.append(record)
 
                 except Exception as e:
                     logger.warning(f"Skipping malformed record: {record} - Error: {e}")
@@ -237,10 +323,13 @@ class BabyTrackerBot:
                     formatted_str += f"  Medications: {data['medications']}\n\n"
                 else: # For 7/30/90 days
                     formatted_str += f"  Vitamin D: {data['vitamin_d']} [Given] / {period_days} Days\n"
-                    formatted_str += f"  Medications: {data['medications']}\n\n" # Medications still shown for longer periods
+                    formatted_str += f"  Medications: {data['medications']}\n\n"
                 return formatted_str
 
             arg = context.args[0].lower() if context.args else None
+            
+            graph_data = None
+            graph_period_name = ""
 
             if arg == 'today':
                 response_message += format_summary("Current Day", summary_today, f"({today_ist.strftime('%Y-%m-%d')})")
@@ -248,21 +337,33 @@ class BabyTrackerBot:
                 response_message += format_summary("Previous Day", summary_yesterday, f"({yesterday_ist.strftime('%Y-%m-%d')})")
             elif arg == '7days':
                 response_message += format_summary("Last 7 Days", summary_last_7_days, period_days=7)
+                graph_data = records_7_days
+                graph_period_name = "Last 7 Days"
             elif arg == '1month':
                 response_message += format_summary("Last 1 Month", summary_last_30_days, period_days=30)
-            elif arg == '3month': # New 3-month summary option
+                graph_data = records_30_days
+                graph_period_name = "Last 30 Days"
+            elif arg == '3month':
                 response_message += format_summary("Last 3 Months", summary_last_90_days, period_days=90)
-            else: # Default to showing all summaries
+                graph_data = records_90_days
+                graph_period_name = "Last 90 Days"
+            else: # Default to showing all summaries and no graph
                 response_message += format_summary("Current Day", summary_today, f"({today_ist.strftime('%Y-%m-%d')})")
                 response_message += format_summary("Previous Day", summary_yesterday, f"({yesterday_ist.strftime('%Y-%m-%d')})")
                 response_message += format_summary("Last 7 Days", summary_last_7_days, period_days=7)
                 response_message += format_summary("Last 1 Month", summary_last_30_days, period_days=30)
-                response_message += format_summary("Last 3 Months", summary_last_90_days, period_days=90) # Added to default all summaries
+                response_message += format_summary("Last 3 Months", summary_last_90_days, period_days=90)
 
             await update.message.reply_html(response_message)
 
+            # Send graph if applicable
+            if graph_data:
+                graph_buffer = self._generate_activity_bar_chart(graph_data, graph_period_name)
+                if graph_buffer:
+                    await update.message.reply_photo(photo=graph_buffer, caption=f"Activity trends for {graph_period_name}")
+
         except Exception as e:
-            logger.error(f"Error generating summary: {e}")
+            logger.error(f"Error generating summary: {e}", exc_info=True)
             await update.message.reply_text("❌ Error generating summary. Please try again.")
 
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -300,16 +401,16 @@ class BabyTrackerBot:
             await update.message.reply_text("Please type the medication name (e.g., `Tylenol`).")
         elif text == "Vitamin D":
             await self.vitamind(update, context)
-        elif text == "Summary (Today)": # Handle new summary buttons
+        elif text == "Summary (Today)":
             context.args = ['today']
             await self.summary(update, context)
         elif text == "Summary (7 Days)":
             context.args = ['7days']
             await self.summary(update, context)
         elif text == "Summary (30 Days)":
-            context.args = ['1month'] # Mapped to '1month' for consistency with existing summary logic
+            context.args = ['1month']
             await self.summary(update, context)
-        elif text == "Summary (90 Days)": # Handle new 90 days summary button
+        elif text == "Summary (90 Days)":
             context.args = ['3month']
             await self.summary(update, context)
         elif text == "Cold Start":
