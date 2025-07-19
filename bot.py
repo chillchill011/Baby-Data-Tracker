@@ -88,9 +88,10 @@ class BabyTrackerBot:
         keyboard = [
             [KeyboardButton("Poop"), KeyboardButton("Pee")],
             [KeyboardButton("Feed"), KeyboardButton("Medication")],
-            [KeyboardButton("Vitamin D")], # New button for Vitamin D
-            [KeyboardButton("Summary"), KeyboardButton("Cold Start")],
-            [KeyboardButton("Help")]
+            [KeyboardButton("Vitamin D")],
+            [KeyboardButton("Summary (Today)"), KeyboardButton("Summary (7 Days)")], # Changed summary buttons
+            [KeyboardButton("Summary (30 Days)"), KeyboardButton("Summary (90 Days)")], # Added 90 Days summary button
+            [KeyboardButton("Cold Start"), KeyboardButton("Help")]
         ]
         return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
 
@@ -101,10 +102,10 @@ class BabyTrackerBot:
             f"Hi {user.mention_html()}! I'm your Baby Tracker Bot.\n\n"
             "Use the keyboard below to log activities or get summaries.\n"
             "You can also type commands:\n"
-            "• `/feed (minutes)`: Log a feeding session (e.g., `/feed 15`)\n" # Fixed formatting here
+            "• `/feed (minutes)`: Log a feeding session (e.g., `/feed 15`)\n"
             "• `/medication [name]`: Log medication (e.g., `/medication Tylenol`)\n"
             "• `/vitamind`: Log Vitamin D medication\n"
-            "• `/summary [today|yesterday|7days|1month]`: Get a summary for specific periods (e.g., `/summary 7days` or just `/summary` for all)\n"
+            "• `/summary [today|yesterday|7days|1month|3month]`: Get a summary for specific periods (e.g., `/summary 7days` or just `/summary` for all)\n" # Updated summary help
             "• `/coldstart`: Wake up the bot if it's inactive (for Render.com free tier)\n"
             "• `/help` or `/menu`: Show this message and the keyboard again"
         )
@@ -158,10 +159,12 @@ class BabyTrackerBot:
             today_ist = now_ist.date()
             yesterday_ist = today_ist - timedelta(days=1)
             
-            summary_today = {'pee': 0, 'poop': 0, 'feed_count': 0, 'feed_total_mins': 0, 'medications': 0}
-            summary_yesterday = {'pee': 0, 'poop': 0, 'feed_count': 0, 'feed_total_mins': 0, 'medications': 0}
-            summary_last_7_days = {'pee': 0, 'poop': 0, 'feed_count': 0, 'feed_total_mins': 0, 'medications': 0}
-            summary_last_30_days = {'pee': 0, 'poop': 0, 'feed_count': 0, 'feed_total_mins': 0, 'medications': 0}
+            # Initialize summary dictionaries with new 'vitamin_d' field
+            summary_today = {'pee': 0, 'poop': 0, 'feed_count': 0, 'feed_total_mins': 0, 'medications': 0, 'vitamin_d': 0}
+            summary_yesterday = {'pee': 0, 'poop': 0, 'feed_count': 0, 'feed_total_mins': 0, 'medications': 0, 'vitamin_d': 0}
+            summary_last_7_days = {'pee': 0, 'poop': 0, 'feed_count': 0, 'feed_total_mins': 0, 'medications': 0, 'vitamin_d': 0}
+            summary_last_30_days = {'pee': 0, 'poop': 0, 'feed_count': 0, 'feed_total_mins': 0, 'medications': 0, 'vitamin_d': 0}
+            summary_last_90_days = {'pee': 0, 'poop': 0, 'feed_count': 0, 'feed_total_mins': 0, 'medications': 0, 'vitamin_d': 0} # New 90-day summary
 
             for record in all_records:
                 try:
@@ -195,7 +198,10 @@ class BabyTrackerBot:
                                 except ValueError:
                                     pass
                         elif activity == 'Medication':
-                            summary_dict['medications'] += 1
+                            if value == 'Vitamin D':
+                                summary_dict['vitamin_d'] += 1
+                            else:
+                                summary_dict['medications'] += 1
 
                     if record_date_ist == today_ist:
                         update_summary_dict(summary_today, activity_type, value_details)
@@ -208,21 +214,31 @@ class BabyTrackerBot:
 
                     if today_ist - record_date_ist < timedelta(days=30):
                         update_summary_dict(summary_last_30_days, activity_type, value_details)
+                    
+                    if today_ist - record_date_ist < timedelta(days=90): # New 90-day condition
+                        update_summary_dict(summary_last_90_days, activity_type, value_details)
 
                 except Exception as e:
                     logger.warning(f"Skipping malformed record: {record} - Error: {e}")
                     continue
 
-            response_message = "--- Baby Activity Summary (IST) ---\n\n" # Updated title
+            response_message = "--- Baby Activity Summary (IST) ---\n\n"
             
-            def format_summary(title, data, date_info=""):
-                return (
+            def format_summary(title, data, date_info="", period_days=None):
+                formatted_str = (
                     f"**{title}** {date_info}:\n"
                     f"  Pee: {data['pee']}\n"
                     f"  Poop: {data['poop']}\n"
                     f"  Feeds: {data['feed_count']} (Total {data['feed_total_mins']} mins)\n"
-                    f"  Medications: {data['medications']}\n\n"
                 )
+                
+                if period_days is None: # For Today/Yesterday
+                    formatted_str += f"  Vitamin D: {data['vitamin_d']} ✅\n"
+                    formatted_str += f"  Medications: {data['medications']}\n\n"
+                else: # For 7/30/90 days
+                    formatted_str += f"  Vitamin D: {data['vitamin_d']} [Given] / {period_days} Days\n"
+                    formatted_str += f"  Medications: {data['medications']}\n\n" # Medications still shown for longer periods
+                return formatted_str
 
             arg = context.args[0].lower() if context.args else None
 
@@ -231,14 +247,17 @@ class BabyTrackerBot:
             elif arg == 'yesterday':
                 response_message += format_summary("Previous Day", summary_yesterday, f"({yesterday_ist.strftime('%Y-%m-%d')})")
             elif arg == '7days':
-                response_message += format_summary("Last 7 Days", summary_last_7_days)
+                response_message += format_summary("Last 7 Days", summary_last_7_days, period_days=7)
             elif arg == '1month':
-                response_message += format_summary("Last 1 Month", summary_last_30_days)
-            else:
+                response_message += format_summary("Last 1 Month", summary_last_30_days, period_days=30)
+            elif arg == '3month': # New 3-month summary option
+                response_message += format_summary("Last 3 Months", summary_last_90_days, period_days=90)
+            else: # Default to showing all summaries
                 response_message += format_summary("Current Day", summary_today, f"({today_ist.strftime('%Y-%m-%d')})")
                 response_message += format_summary("Previous Day", summary_yesterday, f"({yesterday_ist.strftime('%Y-%m-%d')})")
-                response_message += format_summary("Last 7 Days", summary_last_7_days)
-                response_message += format_summary("Last 1 Month", summary_last_30_days)
+                response_message += format_summary("Last 7 Days", summary_last_7_days, period_days=7)
+                response_message += format_summary("Last 1 Month", summary_last_30_days, period_days=30)
+                response_message += format_summary("Last 3 Months", summary_last_90_days, period_days=90) # Added to default all summaries
 
             await update.message.reply_html(response_message)
 
@@ -279,16 +298,27 @@ class BabyTrackerBot:
         elif text == "Medication":
             context.user_data[user_id] = {'awaiting_input_for': 'medication'}
             await update.message.reply_text("Please type the medication name (e.g., `Tylenol`).")
-        elif text == "Vitamin D": # New handler for Vitamin D button
+        elif text == "Vitamin D":
             await self.vitamind(update, context)
-        elif text == "Summary":
-            await update.message.reply_text("Please type `/summary` followed by `today`, `yesterday`, `7days`, or `1month` (e.g., `/summary 7days`). Or just `/summary` for all.")
+        elif text == "Summary (Today)": # Handle new summary buttons
+            context.args = ['today']
+            await self.summary(update, context)
+        elif text == "Summary (7 Days)":
+            context.args = ['7days']
+            await self.summary(update, context)
+        elif text == "Summary (30 Days)":
+            context.args = ['1month'] # Mapped to '1month' for consistency with existing summary logic
+            await self.summary(update, context)
+        elif text == "Summary (90 Days)": # Handle new 90 days summary button
+            context.args = ['3month']
+            await self.summary(update, context)
         elif text == "Cold Start":
             await self.coldstart(update, context)
         elif text == "Help":
             await self.help_command(update, context)
         else:
-            pass
+            await update.message.reply_text("I'm not sure what that means. Please use the menu or type a command.", reply_markup=self._get_main_keyboard())
+
 
     async def handle_free_text_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         text = update.message.text
@@ -357,13 +387,14 @@ async def setup_bot_application():
     telegram_app_instance.add_handler(CommandHandler("poop", bot_instance_global.poop))
     telegram_app_instance.add_handler(CommandHandler("pee", bot_instance_global.pee))
     telegram_app_instance.add_handler(CommandHandler("medication", bot_instance_global.medication))
-    telegram_app_instance.add_handler(CommandHandler("vitamind", bot_instance_global.vitamind)) # Added new CommandHandler for vitamind
+    telegram_app_instance.add_handler(CommandHandler("vitamind", bot_instance_global.vitamind))
     telegram_app_instance.add_handler(CommandHandler("summary", bot_instance_global.summary))
     telegram_app_instance.add_handler(CommandHandler("help", bot_instance_global.help_command))
     telegram_app_instance.add_handler(CommandHandler("menu", bot_instance_global.menu_command))
     telegram_app_instance.add_handler(CommandHandler("coldstart", bot_instance_global.coldstart))
 
-    telegram_app_instance.add_handler(MessageHandler(filters.TEXT & filters.Regex("^(Poop|Pee|Feed|Medication|Summary|Cold Start|Help|Vitamin D)$"), bot_instance_global.handle_keyboard_input)) # Updated Regex
+    # Updated Regex to match new keyboard buttons
+    telegram_app_instance.add_handler(MessageHandler(filters.TEXT & filters.Regex("^(Poop|Pee|Feed|Medication|Vitamin D|Summary \\(Today\\)|Summary \\(7 Days\\)|Summary \\(30 Days\\)|Summary \\(90 Days\\)|Cold Start|Help)$"), bot_instance_global.handle_keyboard_input))
     telegram_app_instance.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot_instance_global.handle_free_text_input))
 
     webhook_path = "/webhook"
