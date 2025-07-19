@@ -101,9 +101,9 @@ class BabyTrackerBot:
             f"Hi {user.mention_html()}! I'm your Baby Tracker Bot.\n\n"
             "Use the keyboard below to log activities or get summaries.\n"
             "You can also type commands:\n"
-            "• `/feed <minutes>`: Log a feeding session (e.g., `/feed 15`)\n"
+            "• `/feed (minutes)`: Log a feeding session (e.g., `/feed 15`)\n" # Fixed formatting here
             "• `/medication [name]`: Log medication (e.g., `/medication Tylenol`)\n"
-            "• `/vitamind`: Log Vitamin D medication\n" # Added new command help
+            "• `/vitamind`: Log Vitamin D medication\n"
             "• `/summary [today|yesterday|7days|1month]`: Get a summary for specific periods (e.g., `/summary 7days` or just `/summary` for all)\n"
             "• `/coldstart`: Wake up the bot if it's inactive (for Render.com free tier)\n"
             "• `/help` or `/menu`: Show this message and the keyboard again"
@@ -229,7 +229,7 @@ class BabyTrackerBot:
             if arg == 'today':
                 response_message += format_summary("Current Day", summary_today, f"({today_ist.strftime('%Y-%m-%d')})")
             elif arg == 'yesterday':
-                response_message += format_summary("Previous Day", summary_yesterday, f"({yester-day_ist.strftime('%Y-%m-%d')})")
+                response_message += format_summary("Previous Day", summary_yesterday, f"({yesterday_ist.strftime('%Y-%m-%d')})")
             elif arg == '7days':
                 response_message += format_summary("Last 7 Days", summary_last_7_days)
             elif arg == '1month':
