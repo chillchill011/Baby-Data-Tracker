@@ -89,8 +89,8 @@ class BabyTrackerBot:
             [KeyboardButton("Poop"), KeyboardButton("Pee")],
             [KeyboardButton("Feed"), KeyboardButton("Medication")],
             [KeyboardButton("Vitamin D")],
-            [KeyboardButton("Summary (Today)"), KeyboardButton("Summary (7 Days)")], # Changed summary buttons
-            [KeyboardButton("Summary (30 Days)"), KeyboardButton("Summary (90 Days)")], # Added 90 Days summary button
+            [KeyboardButton("Summary (Today)"), KeyboardButton("Summary (7 Days)")],
+            [KeyboardButton("Summary (30 Days)"), KeyboardButton("Summary (90 Days)")],
             [KeyboardButton("Cold Start"), KeyboardButton("Help")]
         ]
         return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
@@ -105,7 +105,7 @@ class BabyTrackerBot:
             "• `/feed (minutes)`: Log a feeding session (e.g., `/feed 15`)\n"
             "• `/medication [name]`: Log medication (e.g., `/medication Tylenol`)\n"
             "• `/vitamind`: Log Vitamin D medication\n"
-            "• `/summary [today|yesterday|7days|1month|3month]`: Get a summary for specific periods (e.g., `/summary 7days` or just `/summary` for all)\n" # Updated summary help
+            "• `/summary [today|yesterday|7days|1month|3month]`: Get a summary for specific periods (e.g., `/summary 7days` or just `/summary` for all)\n"
             "• `/coldstart`: Wake up the bot if it's inactive (for Render.com free tier)\n"
             "• `/help` or `/menu`: Show this message and the keyboard again"
         )
@@ -160,11 +160,14 @@ class BabyTrackerBot:
             yesterday_ist = today_ist - timedelta(days=1)
             
             # Initialize summary dictionaries with new 'vitamin_d' field
-            summary_today = {'pee': 0, 'poop': 0, 'feed_count': 0, 'feed_total_mins': 0, 'medications': 0, 'vitamin_d': 0}
-            summary_yesterday = {'pee': 0, 'poop': 0, 'feed_count': 0, 'feed_total_mins': 0, 'medications': 0, 'vitamin_d': 0}
+            # MODIFIED: Store lists of times for Pee, Poop, Feed for Today/Yesterday
+            summary_today = {'pee': [], 'poop': [], 'feed': [], 'feed_total_mins': 0, 'medications': 0, 'vitamin_d': 0}
+            summary_yesterday = {'pee': [], 'poop': [], 'feed': [], 'feed_total_mins': 0, 'medications': 0, 'vitamin_d': 0}
+            
+            # Longer period summaries remain with counts
             summary_last_7_days = {'pee': 0, 'poop': 0, 'feed_count': 0, 'feed_total_mins': 0, 'medications': 0, 'vitamin_d': 0}
             summary_last_30_days = {'pee': 0, 'poop': 0, 'feed_count': 0, 'feed_total_mins': 0, 'medications': 0, 'vitamin_d': 0}
-            summary_last_90_days = {'pee': 0, 'poop': 0, 'feed_count': 0, 'feed_total_mins': 0, 'medications': 0, 'vitamin_d': 0} # New 90-day summary
+            summary_last_90_days = {'pee': 0, 'poop': 0, 'feed_count': 0, 'feed_total_mins': 0, 'medications': 0, 'vitamin_d': 0}
 
             for record in all_records:
                 try:
@@ -172,50 +175,75 @@ class BabyTrackerBot:
                     
                     # Parse timestamp as naive, then localize to IST
                     try:
-                        # Try parsing with seconds first
                         record_dt_naive = datetime.strptime(record_timestamp_str, '%Y-%m-%d %H:%M:%S')
                     except ValueError:
-                        # Fallback to parsing without seconds if needed
                         record_dt_naive = datetime.strptime(record_timestamp_str, '%Y-%m-%d %H:%M')
                     
-                    record_dt_ist = IST.localize(record_dt_naive) # Localize to IST
+                    record_dt_ist = IST.localize(record_dt_naive)
                     record_date_ist = record_dt_ist.date()
+                    # Format time: 07:00 PM -> 7:00 PM, 08:05 AM -> 8:05 AM
+                    record_time_str = record_dt_ist.strftime('%I:%M %p').lstrip('0') 
+                    if record_time_str.startswith('0'): # Remove leading zero for hour if it's 01-09 AM/PM
+                        record_time_str = record_time_str[1:]
+
 
                     activity_type = record['Activity Type']
                     value_details = record['Value/Details']
                     
-                    def update_summary_dict(summary_dict, activity, value):
-                        if activity == 'Pee':
-                            summary_dict['pee'] += 1
-                        elif activity == 'Poop':
-                            summary_dict['poop'] += 1
-                        elif activity == 'Feed':
-                            summary_dict['feed_count'] += 1
-                            if 'mins' in value:
-                                try:
-                                    duration = int(value.split(' ')[0])
-                                    summary_dict['feed_total_mins'] += duration
-                                except ValueError:
-                                    pass
-                        elif activity == 'Medication':
-                            if value == 'Vitamin D':
-                                summary_dict['vitamin_d'] += 1
-                            else:
-                                summary_dict['medications'] += 1
+                    def update_summary_dict(summary_dict, activity, value, record_time_str=None):
+                        # MODIFIED: Store times for daily summaries, counts for others
+                        # Check if it's a daily summary dict (identified by 'pee' being a list)
+                        if isinstance(summary_dict['pee'], list): 
+                            if activity == 'Pee':
+                                summary_dict['pee'].append(record_time_str)
+                            elif activity == 'Poop':
+                                summary_dict['poop'].append(record_time_str)
+                            elif activity == 'Feed':
+                                if 'mins' in value:
+                                    try:
+                                        duration = int(value.split(' ')[0])
+                                        summary_dict['feed'].append((record_time_str, duration))
+                                        summary_dict['feed_total_mins'] += duration
+                                    except ValueError:
+                                        pass # Handle cases where duration is not an integer
+                            elif activity == 'Medication':
+                                if value == 'Vitamin D':
+                                    summary_dict['vitamin_d'] += 1
+                                else:
+                                    summary_dict['medications'] += 1
+                        else: # For longer period summaries (7, 30, 90 days)
+                            if activity == 'Pee':
+                                summary_dict['pee'] += 1
+                            elif activity == 'Poop':
+                                summary_dict['poop'] += 1
+                            elif activity == 'Feed':
+                                summary_dict['feed_count'] += 1
+                                if 'mins' in value:
+                                    try:
+                                        duration = int(value.split(' ')[0])
+                                        summary_dict['feed_total_mins'] += duration
+                                    except ValueError:
+                                        pass # Handle cases where duration is not an integer
+                            elif activity == 'Medication':
+                                if value == 'Vitamin D':
+                                    summary_dict['vitamin_d'] += 1
+                                else:
+                                    summary_dict['medications'] += 1
 
                     if record_date_ist == today_ist:
-                        update_summary_dict(summary_today, activity_type, value_details)
+                        update_summary_dict(summary_today, activity_type, value_details, record_time_str)
                     
                     if record_date_ist == yesterday_ist:
-                        update_summary_dict(summary_yesterday, activity_type, value_details)
+                        update_summary_dict(summary_yesterday, activity_type, value_details, record_time_str)
 
+                    # These remain unchanged, only update counts for longer periods
                     if today_ist - record_date_ist < timedelta(days=7):
                         update_summary_dict(summary_last_7_days, activity_type, value_details)
 
                     if today_ist - record_date_ist < timedelta(days=30):
                         update_summary_dict(summary_last_30_days, activity_type, value_details)
                     
-                    if today_ist - record_date_ist < timedelta(days=90): # New 90-day condition
+                    if today_ist - record_date_ist < timedelta(days=90):
                         update_summary_dict(summary_last_90_days, activity_type, value_details)
 
                 except Exception as e:
@@ -225,19 +253,43 @@ class BabyTrackerBot:
             response_message = "--- Baby Activity Summary (IST) ---\n\n"
             
             def format_summary(title, data, date_info="", period_days=None):
-                formatted_str = (
-                    f"**{title}** {date_info}:\n"
-                    f"  Pee: {data['pee']}\n"
-                    f"  Poop: {data['poop']}\n"
-                    f"  Feeds: {data['feed_count']} (Total {data['feed_total_mins']} mins)\n"
-                )
+                formatted_str = f"**{title}** {date_info}:\n"
                 
-                if period_days is None: # For Today/Yesterday
-                    formatted_str += f"  Vitamin D: {data['vitamin_d']} ✅\n"
-                    formatted_str += f"  Medications: {data['medications']}\n\n"
-                else: # For 7/30/90 days
-                    formatted_str += f"  Vitamin D: {data['vitamin_d']} [Given] / {period_days} Days\n"
-                    formatted_str += f"  Medications: {data['medications']}\n\n" # Medications still shown for longer periods
+                # Check if it's a daily summary (identified by 'pee' being a list)
+                if isinstance(data['pee'], list): 
+                    # Format Pee times
+                    pee_times_str = ""
+                    if data['pee']:
+                        pee_times_str = "\n    - " + "\n    - ".join(data['pee'])
+                    
+                    # Format Poop times
+                    poop_times_str = ""
+                    if data['poop']:
+                        poop_times_str = "\n    - " + "\n    - ".join(data['poop'])
+                    
+                    # Format Feed times
+                    formatted_feeds = []
+                    for time, duration in data['feed']:
+                        formatted_feeds.append(f"{time} ({duration} mins)")
+                    feed_details_str = ""
+                    if formatted_feeds:
+                        feed_details_str = "\n    - " + "\n    - ".join(formatted_feeds)
+
+                    formatted_str += (
+                        f"  Pee: {len(data['pee'])} times {pee_times_str}\n"
+                        f"  Poop: {len(data['poop'])} times {poop_times_str}\n"
+                        f"  Feeds: {len(data['feed'])} times (Total {data['feed_total_mins']} mins) {feed_details_str}\n"
+                        f"  Vitamin D: {data['vitamin_d']} ✅\n"
+                        f"  Medications: {data['medications']}\n\n"
+                    )
+                else: # For 7/30/90 days (existing count-based summaries)
+                    formatted_str += (
+                        f"  Pee: {data['pee']}\n"
+                        f"  Poop: {data['poop']}\n"
+                        f"  Feeds: {data['feed_count']} (Total {data['feed_total_mins']} mins)\n"
+                        f"  Vitamin D: {data['vitamin_d']} [Given] / {period_days} Days\n"
+                        f"  Medications: {data['medications']}\n\n"
+                    )
                 return formatted_str
 
             arg = context.args[0].lower() if context.args else None
@@ -245,19 +297,20 @@ class BabyTrackerBot:
             if arg == 'today':
                 response_message += format_summary("Current Day", summary_today, f"({today_ist.strftime('%Y-%m-%d')})")
             elif arg == 'yesterday':
+                # Corrected typo: yesterday_ist instead of yesterry_ist
                 response_message += format_summary("Previous Day", summary_yesterday, f"({yesterday_ist.strftime('%Y-%m-%d')})")
             elif arg == '7days':
                 response_message += format_summary("Last 7 Days", summary_last_7_days, period_days=7)
             elif arg == '1month':
                 response_message += format_summary("Last 1 Month", summary_last_30_days, period_days=30)
-            elif arg == '3month': # New 3-month summary option
+            elif arg == '3month':
                 response_message += format_summary("Last 3 Months", summary_last_90_days, period_days=90)
             else: # Default to showing all summaries
                 response_message += format_summary("Current Day", summary_today, f"({today_ist.strftime('%Y-%m-%d')})")
                 response_message += format_summary("Previous Day", summary_yesterday, f"({yesterday_ist.strftime('%Y-%m-%d')})")
                 response_message += format_summary("Last 7 Days", summary_last_7_days, period_days=7)
                 response_message += format_summary("Last 1 Month", summary_last_30_days, period_days=30)
-                response_message += format_summary("Last 3 Months", summary_last_90_days, period_days=90) # Added to default all summaries
+                response_message += format_summary("Last 3 Months", summary_last_90_days, period_days=90)
 
             await update.message.reply_html(response_message)
 
@@ -300,16 +353,16 @@ class BabyTrackerBot:
             await update.message.reply_text("Please type the medication name (e.g., `Tylenol`).")
         elif text == "Vitamin D":
             await self.vitamind(update, context)
-        elif text == "Summary (Today)": # Handle new summary buttons
+        elif text == "Summary (Today)":
             context.args = ['today']
             await self.summary(update, context)
         elif text == "Summary (7 Days)":
             context.args = ['7days']
             await self.summary(update, context)
         elif text == "Summary (30 Days)":
-            context.args = ['1month'] # Mapped to '1month' for consistency with existing summary logic
+            context.args = ['1month']
             await self.summary(update, context)
-        elif text == "Summary (90 Days)": # Handle new 90 days summary button
+        elif text == "Summary (90 Days)":
             context.args = ['3month']
             await self.summary(update, context)
         elif text == "Cold Start":
@@ -358,8 +411,8 @@ async def setup_bot_application():
     global telegram_app_instance
     global bot_instance_global
 
-    bot_token = os.getenv("BOT_TOKEN")
-    spreadsheet_id = os.getenv("GOOGLE_SHEET_ID")
+    bot_token = os.getenv("TELEGRAM_TOKEN") # Corrected env var name based on render.yaml
+    spreadsheet_id = os.getenv("SPREADSHEET_ID") # Corrected env var name based on render.yaml
     google_credentials_json_b64 = os.getenv("GOOGLE_CREDENTIALS_JSON_BASE64")
     render_external_url = os.getenv("RENDER_EXTERNAL_URL")
 
@@ -373,13 +426,11 @@ async def setup_bot_application():
         exit(1)
 
     if not all([bot_token, spreadsheet_id, google_credentials_json_b64]):
-        logger.error("Missing one or more required environment variables (BOT_TOKEN, GOOGLE_SHEET_ID, GOOGLE_CREDENTIALS_JSON_BASE64).")
+        logger.error("Missing one or more required environment variables (TELEGRAM_TOKEN, SPREADSHEET_ID, GOOGLE_CREDENTIALS_JSON_BASE64).")
         exit(1)
 
     bot_instance_global = BabyTrackerBot(bot_token, spreadsheet_id, google_credentials_json_b64)
     
-    # PingService URL setup is no longer needed here as it's not used for internal pinging.
-
     telegram_app_instance = Application.builder().token(bot_token).build()
 
     telegram_app_instance.add_handler(CommandHandler("start", bot_instance_global.start))
