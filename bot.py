@@ -88,6 +88,7 @@ class BabyTrackerBot:
         keyboard = [
             [KeyboardButton("Poop"), KeyboardButton("Pee")],
             [KeyboardButton("Feed"), KeyboardButton("Medication")],
+            [KeyboardButton("Vitamin D")], # New button for Vitamin D
             [KeyboardButton("Summary"), KeyboardButton("Cold Start")],
             [KeyboardButton("Help")]
         ]
@@ -100,8 +101,9 @@ class BabyTrackerBot:
             f"Hi {user.mention_html()}! I'm your Baby Tracker Bot.\n\n"
             "Use the keyboard below to log activities or get summaries.\n"
             "You can also type commands:\n"
-            "• `/feed &lt;minutes&gt;`: Log a feeding session (e.g., `/feed 15`)\n"
+            "• `/feed <minutes>`: Log a feeding session (e.g., `/feed 15`)\n"
             "• `/medication [name]`: Log medication (e.g., `/medication Tylenol`)\n"
+            "• `/vitamind`: Log Vitamin D medication\n" # Added new command help
             "• `/summary [today|yesterday|7days|1month]`: Get a summary for specific periods (e.g., `/summary 7days` or just `/summary` for all)\n"
             "• `/coldstart`: Wake up the bot if it's inactive (for Render.com free tier)\n"
             "• `/help` or `/menu`: Show this message and the keyboard again"
@@ -141,6 +143,10 @@ class BabyTrackerBot:
     async def medication(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         med_name = " ".join(context.args) if context.args else "Medication"
         await self._log_activity(update, "Medication", med_name)
+
+    async def vitamind(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Logs Vitamin D medication directly."""
+        await self._log_activity(update, "Medication", "Vitamin D")
 
     async def summary(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Provides a summary of activities for various periods."""
@@ -223,7 +229,7 @@ class BabyTrackerBot:
             if arg == 'today':
                 response_message += format_summary("Current Day", summary_today, f"({today_ist.strftime('%Y-%m-%d')})")
             elif arg == 'yesterday':
-                response_message += format_summary("Previous Day", summary_yesterday, f"({yesterday_ist.strftime('%Y-%m-%d')})")
+                response_message += format_summary("Previous Day", summary_yesterday, f"({yester-day_ist.strftime('%Y-%m-%d')})")
             elif arg == '7days':
                 response_message += format_summary("Last 7 Days", summary_last_7_days)
             elif arg == '1month':
@@ -273,6 +279,8 @@ class BabyTrackerBot:
         elif text == "Medication":
             context.user_data[user_id] = {'awaiting_input_for': 'medication'}
             await update.message.reply_text("Please type the medication name (e.g., `Tylenol`).")
+        elif text == "Vitamin D": # New handler for Vitamin D button
+            await self.vitamind(update, context)
         elif text == "Summary":
             await update.message.reply_text("Please type `/summary` followed by `today`, `yesterday`, `7days`, or `1month` (e.g., `/summary 7days`). Or just `/summary` for all.")
         elif text == "Cold Start":
@@ -349,12 +357,13 @@ async def setup_bot_application():
     telegram_app_instance.add_handler(CommandHandler("poop", bot_instance_global.poop))
     telegram_app_instance.add_handler(CommandHandler("pee", bot_instance_global.pee))
     telegram_app_instance.add_handler(CommandHandler("medication", bot_instance_global.medication))
+    telegram_app_instance.add_handler(CommandHandler("vitamind", bot_instance_global.vitamind)) # Added new CommandHandler for vitamind
     telegram_app_instance.add_handler(CommandHandler("summary", bot_instance_global.summary))
     telegram_app_instance.add_handler(CommandHandler("help", bot_instance_global.help_command))
     telegram_app_instance.add_handler(CommandHandler("menu", bot_instance_global.menu_command))
     telegram_app_instance.add_handler(CommandHandler("coldstart", bot_instance_global.coldstart))
 
-    telegram_app_instance.add_handler(MessageHandler(filters.TEXT & filters.Regex("^(Poop|Pee|Feed|Medication|Summary|Cold Start|Help)$"), bot_instance_global.handle_keyboard_input))
+    telegram_app_instance.add_handler(MessageHandler(filters.TEXT & filters.Regex("^(Poop|Pee|Feed|Medication|Summary|Cold Start|Help|Vitamin D)$"), bot_instance_global.handle_keyboard_input)) # Updated Regex
     telegram_app_instance.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot_instance_global.handle_free_text_input))
 
     webhook_path = "/webhook"
